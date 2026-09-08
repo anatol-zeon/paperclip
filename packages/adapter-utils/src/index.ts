@@ -103,7 +103,7 @@ export type {
   AdapterLoginCompletionContext,
   AdapterLoginCapability,
 } from "./login-capability.js";
-export { isAdapterAccountBinding } from "./account-binding.js";
+export { isAdapterAccountBinding, validateAdapterAccountBinding } from "./account-binding.js";
 export type { AdapterAccountBinding, AdapterAccountIdentity } from "./account-binding.js";
 export { raceLoginRunnerExit } from "./login-runner-lifecycle.js";
 export type {

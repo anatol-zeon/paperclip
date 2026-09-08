@@ -13,7 +13,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ServerAdapterModule } from "./types.js";
-import { validateAdapterLoginCapability } from "@paperclipai/adapter-utils";
+import {
+  validateAdapterLoginCapability,
+  validateAdapterAccountBinding,
+} from "@paperclipai/adapter-utils";
 import { logger } from "../middleware/logger.js";
 
 import {
@@ -171,6 +174,18 @@ export function validateAdapterModule(mod: unknown, packageName: string): Server
   } catch (err) {
     throw new Error(
       `createServerAdapter() from "${packageName}" returned an invalid login capability: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // Fail closed on a malformed account binding. The validator throws a clear
+  // error, so the loader rejects the adapter instead of loading it with a
+  // partial capability.
+  try {
+    validateAdapterAccountBinding(adapterModule);
+  } catch (err) {
+    throw new Error(
+      `createServerAdapter() from "${packageName}" returned an invalid account binding: ` +
         `${err instanceof Error ? err.message : String(err)}`,
     );
   }
