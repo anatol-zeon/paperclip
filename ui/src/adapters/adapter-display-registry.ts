@@ -57,6 +57,29 @@ export interface AdapterDisplayInfo {
   disabledLabel?: string;
   experimental?: boolean;
   hideFromVisualSelection?: boolean;
+  /**
+   * The environment variable an agent sets to select one of this adapter's
+   * login accounts — the UI mirror of the server's `accountBinding.envKey`.
+   *
+   * It lives here, keyed by type, rather than on `UIAdapterModule`, because an
+   * external adapter that overrides a built-in replaces that module with a
+   * bridge carrying only parser and config fields (see `syncExternalAdapters`
+   * in `registry.ts`); the key would vanish with it, and the picker would stop
+   * clearing that vendor's variable.
+   *
+   * It is duplicated from the server rather than fetched, so the account picker
+   * knows the full set of account variables to clear with no loading state of
+   * its own — the set is a property of which adapters declare a binding, not of
+   * which secrets a company happens to hold. Projecting it through
+   * `buildAdapterCapabilities` (`server/src/routes/adapters.ts`) is only three
+   * lines, but it would add a second query whose pending state recreates the
+   * hole this closes. `metadata.test.ts` asserts the two sides agree.
+   *
+   * The limitation of being static: a plugin adapter registered at runtime
+   * cannot declare one here. If that ever needs supporting, the server
+   * projection is the right move after all.
+   */
+  accountEnvKey?: string;
 }
 
 const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
@@ -73,12 +96,14 @@ const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
     description: "Claude Code CLI harness",
     icon: Sparkles,
     recommended: true,
+    accountEnvKey: "CLAUDE_CONFIG_DIR",
   },
   codex_local: {
     label: "Codex",
     description: "Codex CLI harness",
     icon: Code,
     recommended: true,
+    accountEnvKey: "CODEX_HOME",
   },
   paperclip_runner: {
     label: "Paperclip Runner",

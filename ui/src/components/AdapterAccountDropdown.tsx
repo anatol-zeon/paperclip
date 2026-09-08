@@ -117,7 +117,7 @@ export function AdapterAccountDropdown({
   // Fetched on demand and never on a timer: every listing resolves each
   // account's secret, which writes an audit event and bumps that secret's
   // `lastResolvedAt`.
-  const { data, isPending, isError, isSuccess } = useQuery<AdapterAccount[]>({
+  const { data } = useQuery<AdapterAccount[]>({
     queryKey: queryKeys.adapterAccounts.list(companyId),
     queryFn: () => adapterAccountsApi.list(companyId!),
     enabled: Boolean(companyId),
@@ -128,10 +128,9 @@ export function AdapterAccountDropdown({
     refetchOnWindowFocus: false,
   });
 
-  // `data` stays undefined until the listing actually succeeds. Loading, failed
-  // and genuinely-empty are three different answers and the flags above keep
-  // them apart; a `= []` default here would erase the difference and let the
-  // picker act on an empty account set it never actually received.
+  // No rows until the listing succeeds — which now costs nothing, because the
+  // only thing the picker must know before it can act, the set of account
+  // variables to clear, no longer comes from this query at all.
   const accounts = useMemo(() => data ?? [], [data]);
 
   const visible = useMemo(
@@ -139,28 +138,31 @@ export function AdapterAccountDropdown({
     [accounts, disabledTypes],
   );
 
-  // Every account variable any listed adapter uses. A selection clears all of
-  // them except the one it sets, so switching vendors cannot leave the previous
+  // Every account variable any adapter can bind. A selection clears all of them
+  // except the one it sets, so switching vendors cannot leave the previous
   // vendor's home bound on the agent.
   //
-  // Built from the UNFILTERED list on purpose. `visible` drops accounts whose
-  // adapter is disabled, and a disabled adapter's binding is exactly the one a
-  // user can no longer see to remove: deriving the clear set from `visible`
-  // would leave `CODEX_HOME` bound after disabling Codex and switching to
-  // Claude.
+  // Static, and deliberately not derived from the fetched accounts: which
+  // variables are account variables is a property of which adapters declare a
+  // binding, not of which secrets a company happens to hold. So it is equally
+  // correct while the listing is pending, has failed, is empty, or is only
+  // partially populated — and the default row needs no gate waiting on that
+  // query. Deriving it from the accounts made the set unknowable in exactly
+  // those states, and a company with no Codex secret would silently keep a
+  // `CODEX_HOME` binding across a switch to Claude.
   //
-  // Accepted residual: an env key belonging to a vendor the company holds no
-  // account secret for is not in this set and survives the switch. That is the
-  // intended policy, not an oversight — with no account secrets there was no
-  // account to choose through this picker, so such a binding was hand-typed,
-  // and silently deleting hand-typed configuration on a vendor switch is the
-  // more surprising outcome. It applies partially too: with Claude accounts but
-  // no Codex ones, a hand-typed `CODEX_HOME` survives. Revisit only alongside a
-  // server-supplied env-key set (the adapter registry knows every account
-  // binding's key regardless of which secrets exist).
+  // Unfiltered by `disabledTypes` on purpose: a disabled adapter's binding is
+  // exactly the one a user can no longer see to remove.
   const allEnvKeys = useMemo(
-    () => Array.from(new Set(accounts.map((account) => account.envKey))),
-    [accounts],
+    () =>
+      Array.from(
+        new Set(
+          listAdapterOptions()
+            .map((option) => option.accountEnvKey)
+            .filter((key): key is string => Boolean(key)),
+        ),
+      ),
+    [],
   );
 
   // The vendor list is the adapter registry, filtered exactly as
@@ -252,25 +254,18 @@ export function AdapterAccountDropdown({
               // account set — clearing nothing on exactly the path where a user
               // is most likely to retry, and leaving the previous vendor's home
               // bound while the UI claims the company default.
-              disabled={vendor.comingSoon || !isSuccess}
-              title={
-                vendor.comingSoon
-                  ? undefined
-                  : isError
-                    ? "Couldn't load this company's accounts, so switching back to the default cannot be done safely."
-                    : isPending
-                      ? "Loading this company's accounts…"
-                      : undefined
-              }
+              // No gate on the account query: `clearEnvKeys` is static, so
+              // choosing the company default while the listing is pending or
+              // has failed does exactly the right thing — clear every account
+              // variable, bind none.
+              disabled={vendor.comingSoon}
               className={cn(
                 "flex w-full items-center justify-between rounded px-2 py-1.5 text-sm",
-                isSuccess && !vendor.comingSoon
-                  ? "hover:bg-muted/60"
-                  : "cursor-not-allowed opacity-40",
-                vendor.type === adapterType && selected === null && isSuccess && "bg-accent",
+                vendor.comingSoon ? "cursor-not-allowed opacity-40" : "hover:bg-muted/60",
+                vendor.type === adapterType && selected === null && "bg-accent",
               )}
               onClick={() => {
-                if (vendor.comingSoon || !isSuccess) return;
+                if (vendor.comingSoon) return;
                 choose({ adapterType: vendor.type, account: null, clearEnvKeys: allEnvKeys });
               }}
             >

@@ -16,6 +16,8 @@ export interface AdapterOptionMetadata {
   comingSoon: boolean;
   hidden: boolean;
   experimental: boolean;
+  /** The account-selection env variable, for the adapters that declare one. */
+  accountEnvKey?: string;
 }
 
 export function listKnownAdapterTypes(): string[] {
@@ -62,13 +64,17 @@ export function listAdapterOptions(
   adapters: UIAdapterModule[] = listUIAdapters(),
 ): AdapterOptionMetadata[] {
   const getLabel = labelFor ?? getAdapterLabel;
-  return adapters.map((adapter) => ({
-    value: adapter.type,
-    label: getLabel(adapter.type),
-    comingSoon: !!getAdapterDisplay(adapter.type).comingSoon,
-    hidden: isAdapterTypeHidden(adapter.type),
-    experimental: !!getAdapterDisplay(adapter.type).experimental,
-  }));
+  return adapters.map((adapter) => {
+    const display = getAdapterDisplay(adapter.type);
+    return {
+      value: adapter.type,
+      label: getLabel(adapter.type),
+      comingSoon: !!display.comingSoon,
+      hidden: isAdapterTypeHidden(adapter.type),
+      experimental: !!display.experimental,
+      accountEnvKey: display.accountEnvKey,
+    };
+  });
 }
 
 /**

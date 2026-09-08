@@ -148,7 +148,7 @@ describe("AdapterAccountDropdown", () => {
     expect(onSelect).toHaveBeenCalledWith({
       adapterType: "codex_local",
       account: null,
-      clearEnvKeys: ["CODEX_HOME", "CLAUDE_CONFIG_DIR"],
+      clearEnvKeys: ["CLAUDE_CONFIG_DIR", "CODEX_HOME"],
     });
   });
 
@@ -190,25 +190,37 @@ describe("AdapterAccountDropdown", () => {
     expect(selected[0]?.textContent).toContain("xxx@gmail.com");
   });
 
-  it("does not offer the company default while the account list is still loading", async () => {
+  it("offers the company default while the account list is still loading", async () => {
+    // The clear set is static, so it is fully known before a single account
+    // arrives. Gating this row on the query instead blocked every vendor in the
+    // list, which is the whole adapter picker.
     mockAdapterAccountsApi.list.mockReturnValue(new Promise(() => {}));
     const { onSelect } = await render();
     const row = defaultRow();
-    expect(row?.disabled).toBe(true);
+    expect(row?.disabled).toBe(false);
     await act(async () => row?.click());
-    expect(onSelect).not.toHaveBeenCalled();
+
+    expect(onSelect).toHaveBeenCalledWith({
+      adapterType: "codex_local",
+      account: null,
+      clearEnvKeys: ["CLAUDE_CONFIG_DIR", "CODEX_HOME"],
+    });
   });
 
-  it("does not offer the company default when the account list failed to load", async () => {
-    // react-query reports a failed query as `isPending === false`, so a gate on
-    // `!isPending` would re-enable the row here against an empty account set.
+  it("offers the company default when the account list failed to load", async () => {
     mockAdapterAccountsApi.list.mockRejectedValue(new Error("listing unavailable"));
     const { onSelect } = await render();
     const row = defaultRow();
-    expect(row?.disabled).toBe(true);
-    expect(row?.title).toContain("load");
+    expect(row?.disabled).toBe(false);
     await act(async () => row?.click());
-    expect(onSelect).not.toHaveBeenCalled();
+
+    // A failed listing must not cost the user the ability to unbind: the
+    // account variables are still cleared and nothing is bound in their place.
+    expect(onSelect).toHaveBeenCalledWith({
+      adapterType: "codex_local",
+      account: null,
+      clearEnvKeys: ["CLAUDE_CONFIG_DIR", "CODEX_HOME"],
+    });
   });
 
   it("clears a disabled adapter's account key too", async () => {
@@ -219,7 +231,7 @@ describe("AdapterAccountDropdown", () => {
     expect(onSelect).toHaveBeenCalledWith({
       adapterType: "codex_local",
       account: null,
-      clearEnvKeys: ["CODEX_HOME", "CLAUDE_CONFIG_DIR"],
+      clearEnvKeys: ["CLAUDE_CONFIG_DIR", "CODEX_HOME"],
     });
   });
 
@@ -270,7 +282,7 @@ describe("AdapterAccountDropdown", () => {
     expect(onSelect).toHaveBeenCalledWith({
       adapterType: vendor!.value,
       account: null,
-      clearEnvKeys: ["CODEX_HOME", "CLAUDE_CONFIG_DIR"],
+      clearEnvKeys: ["CLAUDE_CONFIG_DIR", "CODEX_HOME"],
     });
   });
 

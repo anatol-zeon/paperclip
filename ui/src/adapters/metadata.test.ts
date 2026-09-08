@@ -6,6 +6,7 @@ import {
   listAdapterOptions,
 } from "./metadata";
 import type { UIAdapterModule } from "./types";
+import { listServerAdapters } from "../../../server/src/adapters/registry.js";
 
 const externalAdapter: UIAdapterModule = {
   type: "external_test",
@@ -58,5 +59,39 @@ describe("adapter metadata", () => {
         experimental: false,
       },
     ]);
+  });
+});
+
+/**
+ * `accountEnvKey` in the display registry duplicates a fact the server declares
+ * on `accountBinding`. The duplication is deliberate — it gives the account
+ * picker the full set of account variables to clear with no query and so no
+ * loading state — but a duplicate rots the moment one side moves. Nothing else
+ * would notice: the picker would simply stop clearing the newer adapter's
+ * variable, and an agent would keep running as the previous vendor's account.
+ */
+describe("adapter account env keys", () => {
+  function uiAccountEnvKeys(): Record<string, string> {
+    return Object.fromEntries(
+      listAdapterOptions()
+        .filter((option) => option.accountEnvKey)
+        .map((option) => [option.value, option.accountEnvKey!]),
+    );
+  }
+
+  function serverAccountEnvKeys(): Record<string, string> {
+    return Object.fromEntries(
+      listServerAdapters()
+        .filter((adapter) => adapter.accountBinding)
+        .map((adapter) => [adapter.type, adapter.accountBinding!.envKey]),
+    );
+  }
+
+  it("agree exactly with the server's declared account bindings", () => {
+    const server = serverAccountEnvKeys();
+    // Guards the comparison against passing on two empty objects, which is what
+    // a broken import on either side would produce.
+    expect(Object.keys(server).length).toBeGreaterThan(0);
+    expect(uiAccountEnvKeys()).toEqual(server);
   });
 });
