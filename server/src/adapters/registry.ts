@@ -282,6 +282,16 @@ const claudeLocalAdapter: ServerAdapterModule = {
   getConfigSchema: getClaudeConfigSchema,
   getQuotaWindows: claudeGetQuotaWindows,
   loginCapability: claudeLoginCapability,
+  // CLAUDE_CONFIG_DIR is the variable the plain local lane honors (config-env
+  // merge in claude-local/src/server/execute.ts) and the remote CLI lane
+  // forwards verbatim over SSH. It does NOT reach every lane, though: local
+  // execution with `filesystemScope` on unconditionally overwrites it after
+  // the merge (claude-local/src/server/execute.ts:591,
+  // `env.CLAUDE_CONFIG_DIR = sharedClaudeConfigDir`), and the remote ACP lane
+  // ignores a host-only path, falling back to the managed seed with a loud
+  // stderr log (claude-local/src/server/acp.ts:265). An account selection
+  // made through this binding therefore does not reach those two lanes.
+  // Fixing that is out of scope here; this comment only records it.
   accountBinding: {
     envKey: "CLAUDE_CONFIG_DIR",
     secretPrefix: "CLAUDE_CONFIG_DIR_",
