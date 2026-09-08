@@ -55,4 +55,31 @@ describe("readClaudeAccountIdentity", () => {
     );
     expect(await readClaudeAccountIdentity(home)).toEqual({ handle: "uuid-only", label: null });
   });
+
+  it("returns no label when the email is blank", async () => {
+    await writeFile(
+      path.join(home, ".claude.json"),
+      JSON.stringify({ oauthAccount: { accountUuid: "u1", emailAddress: "   " } }),
+      "utf8",
+    );
+    expect(await readClaudeAccountIdentity(home)).toEqual({ handle: "u1", label: null });
+  });
+
+  it("returns null when the account uuid is blank", async () => {
+    await writeFile(
+      path.join(home, ".claude.json"),
+      JSON.stringify({ oauthAccount: { accountUuid: "   " } }),
+      "utf8",
+    );
+    expect(await readClaudeAccountIdentity(home)).toBeNull();
+  });
+
+  it("returns the account uuid raw, without trimming surrounding whitespace", async () => {
+    await writeFile(
+      path.join(home, ".claude.json"),
+      JSON.stringify({ oauthAccount: { accountUuid: "  abc  " } }),
+      "utf8",
+    );
+    expect(await readClaudeAccountIdentity(home)).toEqual({ handle: "  abc  ", label: null });
+  });
 });

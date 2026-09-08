@@ -4,10 +4,6 @@ import type { AdapterAccountIdentity } from "@paperclipai/adapter-utils";
 
 const CONFIG_FILE_NAME = ".claude.json";
 
-// Nothing upstream trims or blanks-out these fields before they reach us — unlike
-// `readCodexAccountIdentity` (account-identity.ts, codex-local), which reports an
-// already-normalized id from `readCodexAuthInfo`. This reader owns the raw
-// `.claude.json` parse, so both the handle and the label trim here.
 function readString(record: Record<string, unknown>, key: string): string | null {
   const value = record[key];
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -19,9 +15,10 @@ function readString(record: Record<string, unknown>, key: string): string | null
  * email address when the config carries one.
  *
  * Returns null when the directory holds no readable config, or when the config
- * names no OAuth account. The function reads no credential file and returns no
- * token bytes: `.claude.json` holds the account profile, while the tokens live
- * in a separate `.credentials.json` this function never opens.
+ * names no OAuth account with an account uuid. The function reads no credential
+ * file and returns no token bytes: `.claude.json` holds the account profile,
+ * while the tokens live in a separate `.credentials.json` this function never
+ * opens.
  */
 export async function readClaudeAccountIdentity(
   homeDir: string,
@@ -42,7 +39,13 @@ export async function readClaudeAccountIdentity(
   const account = (parsed as Record<string, unknown>).oauthAccount;
   if (typeof account !== "object" || account === null || Array.isArray(account)) return null;
   const record = account as Record<string, unknown>;
-  const handle = readString(record, "accountUuid");
-  if (!handle) return null;
-  return { handle, label: readString(record, "emailAddress") };
+  // Report the account uuid exactly as `.claude.json` stored it — neither this
+  // reader nor its Codex sibling (account-identity.ts, codex-local) trims the
+  // handle, though each still owns and trims its own label (readString above
+  // owns this file's). Trimming the handle could alias a padded on-disk id
+  // onto a different account's already-claimed handle: see
+  // account-handle.ts:22-26 on aliasing.
+  const rawHandle = record.accountUuid;
+  if (typeof rawHandle !== "string" || rawHandle.trim().length === 0) return null;
+  return { handle: rawHandle, label: readString(record, "emailAddress") };
 }
