@@ -28,6 +28,7 @@ export {
   fetchWithTimeout,
   claudeConfigDir,
 } from "./quota.js";
+export { readClaudeAccountIdentity } from "./account-identity.js";
 // The Claude `setup-token` login parser. It reads the interactive login output
 // and returns the authorization URL and the browser-code prompt, or the minted
 // OAuth token from the success record. Both functions fail closed and keep every
