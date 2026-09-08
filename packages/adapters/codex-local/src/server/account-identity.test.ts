@@ -79,4 +79,20 @@ describe("readCodexAccountIdentity", () => {
     );
     expect(await readCodexAccountIdentity(home)).toBeNull();
   });
+
+  it("returns no label when the token's email is blank", async () => {
+    await writeFile(
+      path.join(home, "auth.json"),
+      JSON.stringify({
+        tokens: {
+          account_id: "acct-789",
+          access_token: "access",
+          id_token: jwt({ email: "   " }),
+          refresh_token: "refresh",
+        },
+      }),
+      "utf8",
+    );
+    expect(await readCodexAccountIdentity(home)).toEqual({ handle: "acct-789", label: null });
+  });
 });
