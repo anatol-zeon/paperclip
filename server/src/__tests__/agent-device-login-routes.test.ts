@@ -1616,4 +1616,15 @@ describe("adapter device-login routes", () => {
     expect(loggedText).not.toContain("SECRET-ACCESS-TOKEN");
     expect(loggedText).not.toContain("provider-lease-");
   });
+
+  it("names the account secret from the adapter's declared prefix", async () => {
+    const { accountSecretName } = await import("../routes/agents.js");
+    expect(accountSecretName("codex_local", "acct-a")).toBe("CODEX_HOME_acct-a");
+    expect(accountSecretName("claude_local", "acct-c")).toBe("CLAUDE_CONFIG_DIR_acct-c");
+  });
+
+  it("refuses to name a secret for an adapter with no account binding", async () => {
+    const { accountSecretName } = await import("../routes/agents.js");
+    expect(() => accountSecretName("gemini_local", "acct-g")).toThrow();
+  });
 });

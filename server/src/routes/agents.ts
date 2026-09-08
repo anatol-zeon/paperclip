@@ -101,6 +101,7 @@ import {
   detectAdapterModel,
   findActiveServerAdapter,
   findServerAdapter,
+  getServerAdapter,
   listServerAdapters,
   listAdapterModels,
   refreshAdapterModels,
@@ -281,6 +282,21 @@ function readRunIssueId(context: Record<string, unknown> | null) {
   const paperclipIssue = readObject(context?.paperclipIssue);
   const nestedIssueId = paperclipIssue?.id;
   return typeof nestedIssueId === "string" && isUuidLike(nestedIssueId) ? nestedIssueId : null;
+}
+
+/**
+ * The company-secret name for one account home. The prefix comes from the
+ * adapter's declared account binding, not from a literal, so a login for any
+ * adapter that carries per-account homes names its secret under its own prefix.
+ * Throws for an adapter that declares no binding: naming a secret for it would
+ * create one no run can ever read.
+ */
+export function accountSecretName(adapterType: string, handle: string): string {
+  const binding = getServerAdapter(adapterType)?.accountBinding;
+  if (!binding) {
+    throw new Error(`adapter ${adapterType} declares no account binding`);
+  }
+  return `${binding.secretPrefix}${handle}`;
 }
 
 // Confirms a pre-existing `CODEX_HOME_<handle>` secret still names this
@@ -804,7 +820,7 @@ export function agentRoutes(
                 "device-login credential promotion rejected: the promotion carried no account home",
               );
             }
-            const secretName = `CODEX_HOME_${handle}`;
+            const secretName = accountSecretName(context.adapterType, handle);
             const accountHomeDir = result.accountHomeDir;
             const existingSecret = await secretsSvc.getByName(context.companyId, secretName);
             if (existingSecret) {
