@@ -41,34 +41,53 @@ export interface AdapterAccountBinding {
   readIdentity: (homeDir: string) => Promise<AdapterAccountIdentity | null>;
 }
 
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const SECRET_PREFIX_RE = /^[A-Za-z][A-Za-z0-9_]*_$/;
+
+/**
+ * Checks one candidate against every rule and returns the first broken rule as
+ * a human-readable reason, or null when the candidate is a well-formed
+ * capability. Both `isAdapterAccountBinding` and `validateAdapterAccountBinding`
+ * route through this one check, so the predicate and the thrown error can never
+ * disagree.
+ */
+function accountBindingProblem(value: unknown): string | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return "the capability must be an object.";
+  }
+  const c = value as Partial<AdapterAccountBinding>;
+  if (typeof c.envKey !== "string" || !ENV_KEY_RE.test(c.envKey)) {
+    return `"envKey" must name an environment variable matching ${ENV_KEY_RE.source}.`;
+  }
+  if (typeof c.secretPrefix !== "string" || !SECRET_PREFIX_RE.test(c.secretPrefix)) {
+    return `"secretPrefix" must match ${SECRET_PREFIX_RE.source}, so the handle can be read back out of the secret name.`;
+  }
+  if (typeof c.readIdentity !== "function") return `"readIdentity" must be a function.`;
+  return null;
+}
+
 /**
  * The runtime validator. It fails closed: a malformed capability is rejected, so
- * the registry never accepts a partial one.
+ * the loader never accepts a partial one.
  */
 export function isAdapterAccountBinding(value: unknown): value is AdapterAccountBinding {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const candidate = value as Partial<AdapterAccountBinding>;
-  if (typeof candidate.envKey !== "string") return false;
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(candidate.envKey)) return false;
-  if (typeof candidate.secretPrefix !== "string") return false;
-  if (!/^[A-Za-z][A-Za-z0-9_]*_$/.test(candidate.secretPrefix)) return false;
-  if (typeof candidate.readIdentity !== "function") return false;
-  return true;
+  return accountBindingProblem(value) === null;
 }
 
 /**
  * Validates the optional account-binding capability of an adapter module. The
  * function is a no-op when the module declares no account binding. It throws a
- * clear error when the module declares a malformed capability, so the loader
- * fails closed.
+ * clear error naming the broken rule when the module declares a malformed
+ * capability, so the loader fails closed.
  */
 export function validateAdapterAccountBinding(mod: {
   type?: unknown;
   accountBinding?: unknown;
 }): void {
   if (mod.accountBinding === undefined) return;
-  if (!isAdapterAccountBinding(mod.accountBinding)) {
+  const problem = accountBindingProblem(mod.accountBinding);
+  if (problem !== null) {
     const adapterType = typeof mod.type === "string" && mod.type.length > 0 ? mod.type : "unknown";
-    throw new Error(`Adapter "${adapterType}" declares an invalid account binding.`);
+    throw new Error(`Adapter "${adapterType}" declares an invalid account binding: ${problem}`);
   }
 }
