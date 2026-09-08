@@ -155,14 +155,14 @@ describe("listAdapterAccounts", () => {
     expect(rows[1]).toMatchObject({ status: "active" });
 
     // The throwing readIdentity is not silent: it leaves a log line naming
-    // the adapter, and that line never carries the resolved home path or the
-    // raw error (both of which the "adapter blew up" Error and "/homes/boom"
-    // home dir would leak if logged wholesale).
+    // the adapter. The payload is checked with an exact match, not a
+    // substring check, because JSON.stringify-ing an Error yields "{}" (its
+    // message and stack are non-enumerable) -- a substring assertion would
+    // pass even if the implementation logged the raw error object directly.
+    // An exact match closes that hole: any added field, including a raw
+    // `err`, breaks this test.
     expect(vi.mocked(logger.warn)).toHaveBeenCalledTimes(1);
     const [warnPayload] = vi.mocked(logger.warn).mock.calls[0]!;
-    expect(warnPayload).toMatchObject({ adapterType: "boom_local" });
-    const warnPayloadText = JSON.stringify(warnPayload);
-    expect(warnPayloadText).not.toContain("/homes/boom");
-    expect(warnPayloadText).not.toContain("adapter blew up");
+    expect(warnPayload).toEqual({ adapterType: "boom_local", errorType: "Error" });
   });
 });
