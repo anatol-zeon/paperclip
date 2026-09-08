@@ -1625,6 +1625,6 @@ describe("adapter device-login routes", () => {
 
   it("refuses to name a secret for an adapter with no account binding", async () => {
     const { accountSecretName } = await import("../routes/agents.js");
-    expect(() => accountSecretName("gemini_local", "acct-g")).toThrow();
+    expect(() => accountSecretName("gemini_local", "acct-g")).toThrow(/no account binding/);
   });
 });
