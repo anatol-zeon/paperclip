@@ -20,6 +20,7 @@ import {
   CLAUDE_SETUP_TOKEN_COMMAND,
   parseSetupTokenPrompt,
   parseSetupTokenCredential,
+  readClaudeAccountIdentity,
 } from "@paperclipai/adapter-claude-local/server";
 import {
   agentConfigurationDoc as claudeAgentConfigurationDoc,
@@ -35,6 +36,7 @@ import {
   getConfigSchema as getCodexConfigSchema,
   CODEX_DEVICE_LOGIN_COMMAND,
   parseDeviceLoginPrompt,
+  readCodexAccountIdentity,
 } from "@paperclipai/adapter-codex-local/server";
 import {
   agentConfigurationDoc as codexAgentConfigurationDoc,
@@ -280,6 +282,11 @@ const claudeLocalAdapter: ServerAdapterModule = {
   getConfigSchema: getClaudeConfigSchema,
   getQuotaWindows: claudeGetQuotaWindows,
   loginCapability: claudeLoginCapability,
+  accountBinding: {
+    envKey: "CLAUDE_CONFIG_DIR",
+    secretPrefix: "CLAUDE_CONFIG_DIR_",
+    readIdentity: readClaudeAccountIdentity,
+  },
 };
 
 const acpxLocalAdapter: ServerAdapterModule = {
@@ -354,6 +361,11 @@ const codexLocalAdapter: ServerAdapterModule = {
   getConfigSchema: getCodexConfigSchema,
   getQuotaWindows: codexGetQuotaWindows,
   loginCapability: codexLoginCapability,
+  accountBinding: {
+    envKey: "CODEX_HOME",
+    secretPrefix: "CODEX_HOME_",
+    readIdentity: readCodexAccountIdentity,
+  },
 };
 
 const paperclipRunnerAdapter: ServerAdapterModule = {
