@@ -526,6 +526,14 @@ export interface ServerAdapterModule {
    * API-key-only vendor) omits it. The capability data holds no secret.
    */
   loginCapability?: import("./login-capability.js").AdapterLoginCapability;
+
+  /**
+   * Optional: declare that one agent can select which of the company's login
+   * accounts it runs as. The server uses it to list the company's accounts for
+   * this adapter and to name each account's secret. An adapter with a single
+   * shared credential home omits it. The capability data holds no secret.
+   */
+  accountBinding?: import("./account-binding.js").AdapterAccountBinding;
 }
 
 // ---------------------------------------------------------------------------
