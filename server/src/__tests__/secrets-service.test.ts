@@ -27,7 +27,7 @@ import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } fro
 import { awsSecretsManagerProvider } from "../secrets/aws-secrets-manager-provider.js";
 import { localEncryptedProvider } from "../secrets/local-encrypted-provider.js";
 import { SecretProviderClientError } from "../secrets/types.js";
-import { secretService } from "../services/secrets.js";
+import { ACCOUNT_LISTING_SECRET_CONSUMER_ID, secretService } from "../services/secrets.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -4456,6 +4456,35 @@ describeEmbeddedPostgres("secretService", () => {
       outcome: "success",
     });
     expect(JSON.stringify(events)).not.toContain("runtime-secret");
+  });
+
+  it("records audited access under the account-listing consumer id when resolving an account-home secret", async () => {
+    const companyId = await seedCompany();
+    const svc = secretService(db);
+    const secret = await svc.create(companyId, {
+      name: `CODEX_HOME_${randomUUID()}`,
+      provider: "local_encrypted",
+      value: "/var/paperclip/codex-accounts/acct-1",
+    });
+
+    const resolved = await svc.resolveSecretValueForAccountListing(companyId, secret.id, {
+      configPath: "accounts.codex_local",
+    });
+
+    expect(resolved).toBe("/var/paperclip/codex-accounts/acct-1");
+    const events = await svc.listAccessEvents(companyId, secret.id);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      companyId,
+      secretId: secret.id,
+      consumerType: "system",
+      consumerId: ACCOUNT_LISTING_SECRET_CONSUMER_ID,
+      configPath: "accounts.codex_local",
+      actorType: "system",
+      actorId: null,
+      outcome: "success",
+    });
+    expect(JSON.stringify(events)).not.toContain("/var/paperclip/codex-accounts/acct-1");
   });
 
   it("preserves local implicit board authorization for ephemeral secret access", async () => {

@@ -96,6 +96,10 @@ export const SANDBOX_CLEANUP_CONSUMER_ID = "environment-sandbox-cleanup";
 // trail marks the read as a same-account idempotency check, not a normal
 // runtime bind.
 export const DEVICE_LOGIN_SECRET_CHECK_CONSUMER_ID = "device-login-secret-check";
+// System consumer id for the read-only adapter account listing. The listing
+// resolves an account-home secret's value under this id, so the audit trail
+// marks the read as a listing read, not a run's credential read.
+export const ACCOUNT_LISTING_SECRET_CONSUMER_ID = "adapter-account-listing";
 const SENSITIVE_ENV_KEY_RE =
   /(api[-_]?key|access[-_]?token|auth(?:_?token)?|authorization|bearer|secret|passwd|password|credential|jwt|private[-_]?key|cookie|connectionstring)/i;
 const REDACTED_SENTINEL = "***REDACTED***";
@@ -1550,6 +1554,33 @@ export function secretService(db: Db | DbTransaction) {
         accessContext: {
           consumerType: "system",
           consumerId: DEVICE_LOGIN_SECRET_CHECK_CONSUMER_ID,
+          actorType: "system",
+          actorId: null,
+          configPath: context.configPath,
+        },
+      })
+    ).value;
+  }
+
+  /**
+   * Resolves an account-home secret's value for the read-only account listing.
+   * The listing needs the home path to read the account's non-secret identity
+   * (its id and email); it reads no credential file itself.
+   *
+   * This is a separate, narrowly scoped entry point rather than a call to the
+   * general resolve, so the access event names this consumer and an audit can
+   * tell a listing read apart from a run's credential read.
+   */
+  async function resolveSecretValueForAccountListing(
+    companyId: string,
+    secretId: string,
+    context: { configPath: string },
+  ): Promise<string> {
+    return (
+      await resolveSecretValueInternal(companyId, secretId, "latest", {
+        accessContext: {
+          consumerType: "system",
+          consumerId: ACCOUNT_LISTING_SECRET_CONSUMER_ID,
           actorType: "system",
           actorId: null,
           configPath: context.configPath,
@@ -4500,6 +4531,7 @@ export function secretService(db: Db | DbTransaction) {
     resolveSecretValueForEphemeralAccess,
     resolveSecretValueForSandboxCleanup,
     resolveSecretValueForDeviceLoginCheck,
+    resolveSecretValueForAccountListing,
 
     // A plain string value can equal a Codex account-home path regardless of
     // which provider stores it: an AWS Secrets Manager-backed secret (or any
