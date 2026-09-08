@@ -60,6 +60,7 @@ export {
   fetchWithTimeout,
   codexHomeDir,
 } from "./quota.js";
+export { readCodexAccountIdentity } from "./account-identity.js";
 import type { AdapterSessionCodec } from "@paperclipai/adapter-utils";
 import { sessionCodec as acpxSessionCodec } from "@paperclipai/adapter-utils/acpx-engine/session-codec";
 
