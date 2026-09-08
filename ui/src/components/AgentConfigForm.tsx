@@ -69,6 +69,10 @@ import { ChoosePathButton } from "./PathInstructionsModal";
 import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
 import { ReportsToPicker } from "./ReportsToPicker";
 import {
+  AdapterAccountDropdown,
+  type AdapterAccountSelection,
+} from "./AdapterAccountDropdown";
+import {
   EnvironmentVariablesEditor,
   type EnvironmentVariablesEditorHandle,
 } from "./environment-variables-editor";
@@ -157,6 +161,31 @@ const EMPTY_ENV: Record<string, EnvBinding> = {};
 
 export function supportsAdapterModelRefresh(adapterType: string): boolean {
   return adapterType === "claude_local" || adapterType === "codex_local";
+}
+
+/**
+ * Applies one picker selection to an agent's environment. Pure, so the rule —
+ * bind the chosen account, drop every other vendor's account variable, keep
+ * everything unrelated — is testable without rendering the form.
+ *
+ * The binding carries no `version`. Every reader of an agent env `secret_ref`
+ * resolves a missing version as `"latest"` (see `collectAgentSecretRefs`), so
+ * an omitted selector and an explicit `"latest"` name the same version; the
+ * environment editor writes the explicit form back on the first hand edit.
+ */
+export function buildAccountEnvUpdate(
+  currentEnv: Record<string, EnvBinding>,
+  selection: AdapterAccountSelection,
+): Record<string, EnvBinding> {
+  const next: Record<string, EnvBinding> = { ...currentEnv };
+  for (const key of selection.clearEnvKeys) delete next[key];
+  if (selection.account) {
+    next[selection.account.envKey] = {
+      type: "secret_ref",
+      secretId: selection.account.secretId,
+    };
+  }
+  return next;
 }
 
 export function resolvePaperclipRunnerTransitionModel(
@@ -605,6 +634,111 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
       applyStoredClaudeLogin: true,
     });
     invalidateUserSecretDefinitions();
+  };
+
+  // Everything a vendor switch resets. Lifted verbatim out of the plain adapter
+  // dropdown's own `onChange`, so a switch made through the account picker
+  // resets exactly what a switch made through that dropdown reset — the
+  // adapter-specific fields go back to their defaults and the new vendor's own
+  // defaults are applied on top.
+  const resetAdapterDefaults = (t: string) => {
+    if (isCreate) {
+      // Reset all adapter-specific fields to defaults when switching adapter type
+      const { adapterType: _at, ...defaults } = defaultCreateValues;
+      const nextValues: CreateConfigValues = { ...defaults, adapterType: t };
+      if (t === "codex_local") {
+        nextValues.dangerouslyBypassSandbox =
+          DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
+      } else if (t === "gemini_local") {
+        nextValues.model = DEFAULT_GEMINI_LOCAL_MODEL;
+      } else if (t === "kimi_local") {
+        nextValues.model = DEFAULT_KIMI_LOCAL_MODEL;
+      } else if (t === "cursor") {
+        nextValues.model = DEFAULT_CURSOR_LOCAL_MODEL;
+      } else if (t === "opencode_local") {
+        nextValues.model = DEFAULT_OPENCODE_LOCAL_MODEL;
+      } else if (t === "paperclip_runner") {
+        nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
+      }
+      set!(nextValues);
+      return;
+    }
+    // Clear all adapter config and explicitly blank out model + effort/mode keys
+    // so the old adapter's values don't bleed through via eff()
+    setOverlay((prev) => ({
+      ...prev,
+      adapterType: t,
+      adapterConfig: {
+        model:
+          t === "gemini_local"
+            ? DEFAULT_GEMINI_LOCAL_MODEL
+            : t === "kimi_local"
+              ? DEFAULT_KIMI_LOCAL_MODEL
+            : t === "opencode_local"
+              ? DEFAULT_OPENCODE_LOCAL_MODEL
+            : t === "cursor"
+              ? DEFAULT_CURSOR_LOCAL_MODEL
+            : t === "paperclip_runner"
+              ? resolvePaperclipRunnerTransitionModel(adapterType, config.model)
+              : "",
+        effort: "",
+        modelReasoningEffort: "",
+        variant: "",
+        mode: "",
+        ...(t === "codex_local"
+          ? {
+              dangerouslyBypassApprovalsAndSandbox:
+                DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
+            }
+          : t === "paperclip_runner"
+            ? {
+                provider: "codex",
+                codexPermissionMode:
+                  PAPERCLIP_RUNNER_PERMISSION_CAPABILITIES.codex.defaultMode,
+                lifecycleMode: "per_turn",
+              }
+          : {}),
+      },
+    }));
+  };
+
+  // The picker's single write. It sets the adapter type and the account binding
+  // together, so an agent is never persisted with one vendor's adapter and
+  // another vendor's credential home. Create mode writes into the draft; edit
+  // mode flushes any pending editor draft first, so a hand-typed variable is not
+  // lost, then marks the merged set into the overlay for the normal save path.
+  //
+  // The vendor reset fires only when the adapter type actually changes. It wipes
+  // the model and every adapter-specific field, so firing it on a plain account
+  // switch would silently discard the model the user picked. In edit mode it
+  // also decides the shape of the saved patch: marking `adapterType` on an
+  // unchanged vendor would send the adapter-switch patch, which rebuilds the
+  // adapter config from the agnostic keys alone and drops the rest.
+  //
+  // The reset runs BEFORE the env write on purpose: in edit mode it replaces the
+  // overlay's adapter config wholesale, so an env marked first would be thrown
+  // away. Both writes are queued updates, so the env lands on top of the reset.
+  const handleAccountSelect = (selection: AdapterAccountSelection) => {
+    const vendorChanged = selection.adapterType !== adapterType;
+    if (isCreate) {
+      if (!set) return;
+      const existing = (val!.envBindings ?? EMPTY_ENV) as Record<string, EnvBinding>;
+      if (vendorChanged) resetAdapterDefaults(selection.adapterType);
+      // The env update is the picker's, not the reset's: the reset would blank
+      // every binding, while a vendor switch must keep every variable that is
+      // not some vendor's account home.
+      set({
+        adapterType: selection.adapterType,
+        envBindings: buildAccountEnvUpdate(existing, selection),
+      });
+      return;
+    }
+    const flushedEnv = flushEnvironmentDraft();
+    const baseEnv =
+      flushedEnv ??
+      (eff("adapterConfig", "env", (config.env ?? EMPTY_ENV) as Record<string, EnvBinding>));
+    if (vendorChanged) resetAdapterDefaults(selection.adapterType);
+    mark("adapterConfig", "env", buildAccountEnvUpdate(baseEnv, selection));
   };
 
   const rawCurrentDefaultEnvironmentId = isCreate
@@ -1376,69 +1510,26 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
         <div className={cn(cards ? "border border-border rounded-lg p-4 space-y-3" : "px-4 pb-3 space-y-3")}>
           {showAdapterTypeField && (
             <Field label="Adapter type" hint={help.adapterType}>
-              <AdapterTypeDropdown
-                value={adapterType}
+              {/*
+                The form hands the picker the whole current environment and does
+                not work out the selected account itself: which binding counts as
+                the selection is known only to the account list, and that list
+                lives in the picker.
+              */}
+              <AdapterAccountDropdown
+                companyId={selectedCompanyId ?? null}
+                adapterType={adapterType}
+                envBindings={
+                  isCreate
+                    ? ((val!.envBindings ?? EMPTY_ENV) as Record<string, EnvBinding>)
+                    : (eff(
+                        "adapterConfig",
+                        "env",
+                        (config.env ?? EMPTY_ENV) as Record<string, EnvBinding>,
+                      ))
+                }
                 disabledTypes={adapterPickerDisabledTypes}
-                onChange={(t) => {
-                  if (isCreate) {
-                    // Reset all adapter-specific fields to defaults when switching adapter type
-                    const { adapterType: _at, ...defaults } = defaultCreateValues;
-                    const nextValues: CreateConfigValues = { ...defaults, adapterType: t };
-                    if (t === "codex_local") {
-                      nextValues.dangerouslyBypassSandbox =
-                        DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
-                    } else if (t === "gemini_local") {
-                      nextValues.model = DEFAULT_GEMINI_LOCAL_MODEL;
-                    } else if (t === "kimi_local") {
-                      nextValues.model = DEFAULT_KIMI_LOCAL_MODEL;
-                    } else if (t === "cursor") {
-                      nextValues.model = DEFAULT_CURSOR_LOCAL_MODEL;
-                    } else if (t === "opencode_local") {
-                      nextValues.model = DEFAULT_OPENCODE_LOCAL_MODEL;
-                    } else if (t === "paperclip_runner") {
-                      nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
-                    }
-                    set!(nextValues);
-                  } else {
-                    // Clear all adapter config and explicitly blank out model + effort/mode keys
-                    // so the old adapter's values don't bleed through via eff()
-                    setOverlay((prev) => ({
-                      ...prev,
-                      adapterType: t,
-                      adapterConfig: {
-                        model:
-                          t === "gemini_local"
-                            ? DEFAULT_GEMINI_LOCAL_MODEL
-                            : t === "kimi_local"
-                              ? DEFAULT_KIMI_LOCAL_MODEL
-                            : t === "opencode_local"
-                              ? DEFAULT_OPENCODE_LOCAL_MODEL
-                            : t === "cursor"
-                              ? DEFAULT_CURSOR_LOCAL_MODEL
-                            : t === "paperclip_runner"
-                              ? resolvePaperclipRunnerTransitionModel(adapterType, config.model)
-                              : "",
-                        effort: "",
-                        modelReasoningEffort: "",
-                        variant: "",
-                        mode: "",
-                        ...(t === "codex_local"
-                          ? {
-                              dangerouslyBypassApprovalsAndSandbox:
-                                DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
-                            }
-                          : t === "paperclip_runner"
-                            ? {
-                                provider: "codex",
-                                codexPermissionMode:
-                                  PAPERCLIP_RUNNER_PERMISSION_CAPABILITIES.codex.defaultMode,
-                                lifecycleMode: "per_turn",
-                              }
-                          : {}),
-                      },
-                    }));
-                  }
-                }}
+                onSelect={handleAccountSelect}
               />
             </Field>
           )}
