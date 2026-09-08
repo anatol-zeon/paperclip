@@ -314,6 +314,7 @@ export {
   ADAPTER_AUTH_PANEL_MODES,
   SETUP_TOKEN_TRANSPORT_ADVISORY_CODE,
 } from "./agent.js";
+export type { AdapterAccount, AdapterAccountStatus } from "./adapter-account.js";
 export type {
   AgentEligibilityAgent,
   AgentEligibilityLifecycleReason,
