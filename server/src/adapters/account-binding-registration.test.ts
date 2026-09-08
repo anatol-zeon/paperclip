@@ -47,4 +47,45 @@ describe("account binding registration", () => {
       expect(isAdapterAccountBinding(adapter.accountBinding), adapter.type).toBe(true);
     }
   });
+
+  // Prefixes must not nest. The listing loops every binding over every secret
+  // and keeps each secret whose name starts with that binding's prefix, so if
+  // one adapter's `secretPrefix` were a prefix of another's — say
+  // `CODEX_HOME_` and `CODEX_HOME_ALT_` — the secret `CODEX_HOME_ALT_bob`
+  // would match BOTH bindings and produce two rows sharing one secretId: the
+  // real account, plus a phantom whose handle is `ALT_bob` and whose status is
+  // a spurious `mismatch` — the loudest status the UI has, on an account that
+  // does not exist.
+  //
+  // Nothing else guards this: `SECRET_PREFIX_RE` validates one prefix's shape
+  // and never the set, so no per-adapter check can see the collision. Keeping
+  // the guard here (rather than defending inside the listing loop) is
+  // deliberate — the condition is unreachable with the shipped prefixes, and a
+  // CI failure naming both adapters is more useful than silent de-duplication.
+  //
+  // Scope: built-in adapters only. A plugin adapter registering a nesting
+  // prefix at runtime still slips through, because
+  // `validateAdapterAccountBinding` inspects one module at a time and never
+  // sees the registered set.
+  it("declares no secretPrefix that nests inside another adapter's", () => {
+    const bindings = listServerAdapters().flatMap((adapter) =>
+      adapter.accountBinding
+        ? [{ type: adapter.type, secretPrefix: adapter.accountBinding.secretPrefix }]
+        : [],
+    );
+
+    const collisions: string[] = [];
+    for (const outer of bindings) {
+      for (const inner of bindings) {
+        if (outer === inner) continue;
+        if (inner.secretPrefix.startsWith(outer.secretPrefix)) {
+          collisions.push(
+            `${inner.type} ("${inner.secretPrefix}") nests inside ${outer.type} ("${outer.secretPrefix}")`,
+          );
+        }
+      }
+    }
+
+    expect(collisions).toEqual([]);
+  });
 });
