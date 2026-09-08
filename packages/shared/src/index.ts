@@ -1603,6 +1603,7 @@ export {
   ADAPTER_AUTH_PANEL_MODES,
   SETUP_TOKEN_TRANSPORT_ADVISORY_CODE,
 } from "./types/index.js";
+export type { AdapterAccount, AdapterAccountStatus } from "./types/adapter-account.js";
 export {
   ADAPTER_AUTH_SESSION_ACTIVE_STATUSES,
   isActiveAdapterAuthSessionStatus,
