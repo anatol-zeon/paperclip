@@ -1,5 +1,6 @@
 import type { AdapterAccountBinding } from "@paperclipai/adapter-utils";
 import type { AdapterAccount, AdapterAccountStatus } from "@paperclipai/shared";
+import { logger } from "../middleware/logger.js";
 
 /** One adapter that declares the account-binding capability. */
 export interface AdapterAccountBindingEntry {
@@ -46,8 +47,30 @@ export async function listAdapterAccounts(
 
       let label: string | null = null;
       let status: AdapterAccountStatus = "unavailable";
+
+      // Resolve and read are split into separate try blocks so each failure
+      // mode is named. A resolve failure is already audited under the
+      // listing's own consumer id by resolveSecretValueInternal before it
+      // rethrows (see server/src/services/secrets.ts), so nothing further
+      // needs recording here — the row below just records the fail-soft
+      // status for the response.
+      let homeDir: string;
       try {
-        const homeDir = await deps.resolveSecretValue(companyId, secret.id);
+        homeDir = await deps.resolveSecretValue(companyId, secret.id);
+      } catch {
+        rows.push({
+          adapterType,
+          handle,
+          label: null,
+          secretId: secret.id,
+          secretName: secret.name,
+          envKey: binding.envKey,
+          status: "unavailable",
+        });
+        continue;
+      }
+
+      try {
         const identity = await binding.readIdentity(homeDir);
         if (identity) {
           if (identity.handle === handle) {
@@ -61,10 +84,24 @@ export async function listAdapterAccounts(
             status = "mismatch";
           }
         }
-      } catch {
-        // Fail soft: the row stays listed as unavailable. No error detail is
-        // kept, because a resolve or read failure can carry a path or a
-        // provider message that does not belong in a listing response.
+      } catch (error) {
+        // Fail soft: the row stays listed as unavailable, and the failure
+        // detail stays out of the response — a read failure can carry a
+        // provider message that does not belong in a listing response — but
+        // it is no longer dropped on the floor: it goes to the log instead,
+        // minus the account's home path. Do NOT log the caught error
+        // wholesale, and never log `homeDir`: homeDir is the secret's
+        // resolved value, and a thrown filesystem error's message routinely
+        // embeds the exact path it failed on, so logging the error as-is (or
+        // the home path directly) would leak the secret through the log.
+        // Log only a bounded discriminator — the error's class name — never
+        // its message. A later "let's include the full error for
+        // debuggability" change has to find another way to get that detail;
+        // it does not get to reintroduce the leak here.
+        logger.warn(
+          { adapterType, errorType: error instanceof Error ? error.constructor.name : typeof error },
+          "adapter account readIdentity failed",
+        );
         status = "unavailable";
       }
 

@@ -1,4 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../middleware/logger.js", () => ({
+  logger: {
+    child: vi.fn().mockReturnThis(),
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+  },
+  httpLogger: vi.fn(),
+}));
+
+import { logger } from "../middleware/logger.js";
 import { listAdapterAccounts } from "./adapter-accounts.js";
 
 const CODEX_BINDING = {
@@ -138,5 +153,16 @@ describe("listAdapterAccounts", () => {
     expect(rows.map((row) => row.handle)).toEqual(["x", "acct-a"]);
     expect(rows[0]).toMatchObject({ status: "unavailable" });
     expect(rows[1]).toMatchObject({ status: "active" });
+
+    // The throwing readIdentity is not silent: it leaves a log line naming
+    // the adapter, and that line never carries the resolved home path or the
+    // raw error (both of which the "adapter blew up" Error and "/homes/boom"
+    // home dir would leak if logged wholesale).
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledTimes(1);
+    const [warnPayload] = vi.mocked(logger.warn).mock.calls[0]!;
+    expect(warnPayload).toMatchObject({ adapterType: "boom_local" });
+    const warnPayloadText = JSON.stringify(warnPayload);
+    expect(warnPayloadText).not.toContain("/homes/boom");
+    expect(warnPayloadText).not.toContain("adapter blew up");
   });
 });
