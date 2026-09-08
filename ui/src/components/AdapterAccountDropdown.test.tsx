@@ -153,6 +153,9 @@ describe("AdapterAccountDropdown", () => {
     const { onSelect } = await render();
     const row = accountButtons().find((button) => button.textContent?.includes("acct-x"));
     expect(row?.disabled).toBe(true);
+    // The row says why on its face, not only in a `title` a touch user never
+    // sees.
+    expect(row?.textContent).toContain("Wrong account");
     // `disabled` is also what keeps the row off the keyboard path: an
     // `aria-disabled` row guarded only in `onClick` would still take focus and
     // still activate on Enter.
@@ -225,6 +228,17 @@ describe("AdapterAccountDropdown", () => {
     expect(trigger()?.textContent).not.toContain("acct-a");
     expect(trigger()?.textContent).toContain("Needs login");
     expect(trigger()?.title).toContain("acct-a");
+  });
+
+  it("names an active account with no email by its handle, not as a login problem", async () => {
+    // Both adapters report an account whose credential carries no email as
+    // active with a null label. Reading the phrase off label nullity would tell
+    // a user to re-login to an account that works.
+    mockAdapterAccountsApi.list.mockResolvedValue([{ ...CODEX_A, label: null }]);
+    await render({ envBindings: { CODEX_HOME: { type: "secret_ref", secretId: "s-a" } } });
+
+    expect(trigger()?.textContent).toContain("acct-a");
+    expect(trigger()?.textContent).not.toContain("Needs login");
   });
 
   it("names a mismatched selection as a mismatch, never by its raw handle", async () => {

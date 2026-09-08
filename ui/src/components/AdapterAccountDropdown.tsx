@@ -53,11 +53,18 @@ const WRONG_ACCOUNT = "Wrong account";
  * opaque vendor account id — a UUID for Codex — and the trigger is the only
  * text on screen while the popover is shut, so a bare handle there reads as a
  * glitch rather than as an account. Name the problem instead; the handle stays
- * in the trigger's tooltip for support.
+ * in the trigger's tooltip either way.
+ *
+ * The phrase comes from `status`, never from whether `label` happens to be
+ * null. Both adapters read an account whose credential carries no email as
+ * `active` with a null label, so a `label ?? NEEDS_LOGIN` fallback would tell a
+ * user to re-login to an account that is working fine. An active account with
+ * no email is named by its handle: opaque, but true.
  */
 function accountTriggerText(account: AdapterAccount): string {
   if (account.status === "mismatch") return WRONG_ACCOUNT;
-  return account.label ?? NEEDS_LOGIN;
+  if (account.status === "unavailable") return NEEDS_LOGIN;
+  return account.label ?? account.handle;
 }
 
 export function AdapterAccountDropdown({
