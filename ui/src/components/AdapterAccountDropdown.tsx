@@ -1,7 +1,18 @@
 /**
- * @fileoverview The vendor-and-account picker: one row per vendor account the
- * company holds, grouped under its adapter. It wraps, rather than replaces,
- * the plain adapter picker, so `ConfigureBuiltInAgentModal` stays untouched.
+ * @fileoverview The vendor-and-account picker used by the agent form's
+ * "Adapter type" field: every adapter, with the company's accounts for it
+ * listed underneath.
+ *
+ * It REPLACES `AdapterTypeDropdown` in that field — it does not wrap it — so it
+ * must offer everything that dropdown offered, and it seeds itself from the
+ * same registry source (`listAdapterOptions`) for exactly that reason. The
+ * fetched account list only decorates those vendors; it never decides which
+ * vendors exist. Deriving the vendor list from the accounts hid every adapter
+ * with no account binding — all but two of them — and with no accounts at all
+ * left the user unable to change adapter type.
+ *
+ * `AdapterTypeDropdown` itself is untouched and still serves
+ * `ConfigureBuiltInAgentModal`, which has no account concept.
  */
 
 import { useMemo, useState } from "react";
@@ -9,8 +20,10 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronDown } from "lucide-react";
 import type { AdapterAccount, EnvBinding } from "@paperclipai/shared";
 import { adapterAccountsApi } from "../api/adapterAccounts";
-import { getAdapterLabel } from "../adapters/adapter-display-registry";
+import { getAdapterDisplay, getAdapterLabel } from "../adapters/adapter-display-registry";
+import { listAdapterOptions } from "../adapters/metadata";
 import { queryKeys } from "../lib/queryKeys";
+import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
@@ -65,6 +78,24 @@ function accountTriggerText(account: AdapterAccount): string {
   if (account.status === "mismatch") return WRONG_ACCOUNT;
   if (account.status === "unavailable") return NEEDS_LOGIN;
   return account.label ?? account.handle;
+}
+
+/** One vendor as the picker offers it: the adapter, plus any accounts for it. */
+interface VendorRow {
+  type: string;
+  label: string;
+  comingSoon: boolean;
+  experimental: boolean;
+  accounts: AdapterAccount[];
+}
+
+/** Kept identical to `AgentConfigForm`'s own badge, which is private to it. */
+function ExperimentalBadge() {
+  return (
+    <span className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-(length:--text-nano) font-medium leading-none text-amber-700 dark:text-amber-200">
+      Experimental
+    </span>
+  );
 }
 
 export function AdapterAccountDropdown({
@@ -132,16 +163,31 @@ export function AdapterAccountDropdown({
     [accounts],
   );
 
-  const vendors = useMemo(() => {
+  // The vendor list is the adapter registry, filtered exactly as
+  // `AdapterTypeDropdown` filters it. Accounts are attached to the vendors that
+  // have them; a vendor with none is still offered, because most adapters
+  // declare no account binding at all and every one of them still has to be
+  // selectable. An account whose adapter is not registered here is not shown —
+  // the same type `AdapterTypeDropdown` would never have offered either — but
+  // its env key still reaches `allEnvKeys` above, so a switch away still clears
+  // it.
+  const vendors = useMemo<VendorRow[]>(() => {
     const byType = new Map<string, AdapterAccount[]>();
     for (const account of visible) {
       const rows = byType.get(account.adapterType) ?? [];
       rows.push(account);
       byType.set(account.adapterType, rows);
     }
-    if (!byType.has(adapterType)) byType.set(adapterType, []);
-    return Array.from(byType.entries());
-  }, [visible, adapterType]);
+    return listAdapterOptions()
+      .filter((option) => !disabledTypes.has(option.value))
+      .map((option) => ({
+        type: option.value,
+        label: option.label,
+        comingSoon: option.comingSoon,
+        experimental: option.experimental,
+        accounts: byType.get(option.value) ?? [],
+      }));
+  }, [visible, disabledTypes]);
 
   // An account is bound only when the agent's variable FOR THAT ACCOUNT'S key
   // references that account's own secret. Matching on the secret id alone would
@@ -156,9 +202,12 @@ export function AdapterAccountDropdown({
   const selected =
     visible.find((account) => account.adapterType === adapterType && isBound(account)) ?? null;
 
+  // The vendor the trigger speaks for: the bound account's adapter when there
+  // is one, otherwise the agent's current adapter.
+  const triggerType = selected?.adapterType ?? adapterType;
   const triggerLabel = selected
-    ? `${getAdapterLabel(selected.adapterType)} — ${accountTriggerText(selected)}`
-    : getAdapterLabel(adapterType);
+    ? `${getAdapterLabel(triggerType)} — ${accountTriggerText(selected)}`
+    : getAdapterLabel(triggerType);
 
   function choose(selection: AdapterAccountSelection) {
     onSelect(selection);
@@ -178,58 +227,74 @@ export function AdapterAccountDropdown({
           title={selected ? `Account ${selected.handle}` : undefined}
           className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-accent/50 transition-colors w-full justify-between"
         >
-          <span className="truncate">{triggerLabel}</span>
+          <span className="inline-flex min-w-0 items-center gap-1.5">
+            {triggerType === "opencode_local" ? <OpenCodeLogoIcon className="h-3.5 w-3.5" /> : null}
+            <span className="truncate">{triggerLabel}</span>
+            {getAdapterDisplay(triggerType).experimental && <ExperimentalBadge />}
+          </span>
           <ChevronDown className="h-3 w-3 text-muted-foreground" />
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-(--radix-popover-trigger-width) p-1" align="start">
-        {vendors.map(([type, rows]) => (
-          <div key={type} className="py-1">
-            <div className="px-2 py-1 text-(length:--text-nano) uppercase text-muted-foreground">
-              {getAdapterLabel(type)}
+        {vendors.map((vendor) => (
+          <div key={vendor.type} className="py-1">
+            <div className="flex items-center gap-1.5 px-2 py-1 text-(length:--text-nano) uppercase text-muted-foreground">
+              {vendor.type === "opencode_local" ? <OpenCodeLogoIcon className="h-3.5 w-3.5" /> : null}
+              <span>{vendor.label}</span>
+              {vendor.experimental && <ExperimentalBadge />}
             </div>
             <button
               type="button"
-              data-default-row={type}
+              data-default-row={vendor.type}
               // Gated on `isSuccess`, never on `!isPending`: react-query reports
               // a failed query as `isPending === false` with `data` undefined,
               // so a `!isPending` gate would re-enable this row against an empty
               // account set — clearing nothing on exactly the path where a user
               // is most likely to retry, and leaving the previous vendor's home
               // bound while the UI claims the company default.
-              disabled={!isSuccess}
+              disabled={vendor.comingSoon || !isSuccess}
               title={
-                isError
-                  ? "Couldn't load this company's accounts, so switching back to the default cannot be done safely."
-                  : isPending
-                    ? "Loading this company's accounts…"
-                    : undefined
+                vendor.comingSoon
+                  ? undefined
+                  : isError
+                    ? "Couldn't load this company's accounts, so switching back to the default cannot be done safely."
+                    : isPending
+                      ? "Loading this company's accounts…"
+                      : undefined
               }
               className={cn(
                 "flex w-full items-center justify-between rounded px-2 py-1.5 text-sm",
-                isSuccess ? "hover:bg-muted/60" : "cursor-not-allowed opacity-40",
-                type === adapterType && selected === null && isSuccess && "bg-accent",
+                isSuccess && !vendor.comingSoon
+                  ? "hover:bg-muted/60"
+                  : "cursor-not-allowed opacity-40",
+                vendor.type === adapterType && selected === null && isSuccess && "bg-accent",
               )}
               onClick={() => {
-                if (!isSuccess) return;
-                choose({ adapterType: type, account: null, clearEnvKeys: allEnvKeys });
+                if (vendor.comingSoon || !isSuccess) return;
+                choose({ adapterType: vendor.type, account: null, clearEnvKeys: allEnvKeys });
               }}
             >
               <span className="text-muted-foreground">Company default account</span>
+              {vendor.comingSoon && (
+                <span className="text-(length:--text-nano) text-muted-foreground">Coming soon</span>
+              )}
             </button>
-            {rows.map((account) => {
+            {vendor.accounts.map((account) => {
               // A mismatched home holds a different account than the secret's
               // name claims, so binding it would run the agent as the wrong
               // account. `disabled` on a native button is what makes the row
               // unreachable by keyboard as well as by pointer — do not swap it
               // for `aria-disabled` plus a click guard.
               const unusable = account.status === "mismatch";
+              // A coming-soon vendor is not selectable by any route, account
+              // rows included.
+              const blocked = unusable || vendor.comingSoon;
               return (
                 <button
                   key={account.secretId}
                   type="button"
                   data-account-row={account.secretId}
-                  disabled={unusable}
+                  disabled={blocked}
                   title={
                     unusable
                       ? "This account's home holds a different account's credentials, so it cannot be selected."
@@ -237,11 +302,11 @@ export function AdapterAccountDropdown({
                   }
                   className={cn(
                     "flex w-full items-center justify-between rounded px-2 py-1.5 text-sm",
-                    unusable ? "cursor-not-allowed opacity-40" : "hover:bg-muted/60",
-                    isBound(account) && !unusable && "bg-accent",
+                    blocked ? "cursor-not-allowed opacity-40" : "hover:bg-muted/60",
+                    isBound(account) && !blocked && "bg-accent",
                   )}
                   onClick={() => {
-                    if (unusable) return;
+                    if (blocked) return;
                     choose({
                       adapterType: account.adapterType,
                       account,

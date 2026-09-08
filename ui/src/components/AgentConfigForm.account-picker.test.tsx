@@ -247,6 +247,44 @@ describe("AgentConfigForm adapter account picker", () => {
     await flushReact();
   }
 
+  /**
+   * Set a controlled input the way a keystroke does. React listens for the
+   * native `input` event and reads the value off the element, so assigning
+   * `.value` directly is invisible to it.
+   */
+  function typeInto(input: HTMLInputElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    setter.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  /** Add one environment row and type into it, leaving the draft unblurred. */
+  async function typeNewEnvironmentRow(name: string, value: string) {
+    const addButton = Array.from(container.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Add variable"),
+    );
+    expect(addButton).toBeTruthy();
+    await act(async () => addButton!.click());
+    await flushReact();
+
+    const nameInput = Array.from(
+      container.querySelectorAll<HTMLInputElement>('input[aria-label="Variable name"]'),
+    ).at(-1);
+    expect(nameInput).toBeTruthy();
+    await act(async () => typeInto(nameInput!, name));
+    await flushReact();
+
+    const valueInput = Array.from(
+      container.querySelectorAll<HTMLInputElement>('input[aria-label="Variable value"]'),
+    ).at(-1);
+    expect(valueInput).toBeTruthy();
+    await act(async () => typeInto(valueInput!, value));
+    await flushReact();
+  }
+
   async function clickAccount(secretId: string) {
     const row = document.querySelector<HTMLButtonElement>(`[data-account-row="${secretId}"]`);
     expect(row).toBeTruthy();
@@ -289,7 +327,10 @@ describe("AgentConfigForm adapter account picker", () => {
     return { valuesRef };
   }
 
-  async function renderEdit(agentOverrides: Partial<Agent>) {
+  async function renderEdit(
+    agentOverrides: Partial<Agent>,
+    { autoOpenPicker = true }: { autoOpenPicker?: boolean } = {},
+  ) {
     const onSave = vi.fn();
     const saveRef: { current: (() => void) | null } = { current: null };
     const root = createRoot(container);
@@ -316,7 +357,7 @@ describe("AgentConfigForm adapter account picker", () => {
       );
     });
     await flushReact();
-    await openPicker();
+    if (autoOpenPicker) await openPicker();
 
     async function save() {
       await act(async () => saveRef.current?.());
@@ -436,6 +477,42 @@ describe("AgentConfigForm adapter account picker", () => {
     expect(adapterConfig.env).toEqual({
       HTTP_PROXY: "http://proxy",
       CODEX_HOME: { type: "secret_ref", secretId: "s-a" },
+    });
+  });
+  it("edit mode keeps an unsaved environment keystroke when an account is picked", async () => {
+    // The picker's own write is the only path where a draft the user has typed
+    // but not blurred can vanish: it marks the environment into the overlay, so
+    // without flushing the editor first it marks a base that never saw the
+    // keystroke, and the later save then overwrites the account binding with
+    // the stale draft. Neither half survives without `flushEnvironmentDraft`.
+    const { save } = await renderEdit(
+      {
+        adapterType: "codex_local",
+        adapterConfig: {
+          model: "gpt-5-custom",
+          env: {
+            CODEX_HOME: { type: "secret_ref", secretId: "s-a" },
+            HTTP_PROXY: "http://proxy",
+          },
+        },
+      },
+      { autoOpenPicker: false },
+    );
+
+    await typeNewEnvironmentRow("NEW_VAR", "new-value");
+    // No blur, no editor Save: the keystroke lives only in the editor's draft.
+    await openPicker();
+    await clickAccount("s-b");
+    const patch = await save();
+
+    // The flushed draft is the editor's own emit shape: a hand edit rewrites
+    // legacy plaintext strings as explicit `plain` bindings. What matters here
+    // is that both halves survive — the account binding the picker wrote AND
+    // the row that only ever existed in the editor's draft.
+    expect((patch?.adapterConfig as Record<string, unknown>).env).toEqual({
+      CODEX_HOME: { type: "secret_ref", secretId: "s-b" },
+      HTTP_PROXY: { type: "plain", value: "http://proxy" },
+      NEW_VAR: { type: "plain", value: "new-value" },
     });
   });
 });

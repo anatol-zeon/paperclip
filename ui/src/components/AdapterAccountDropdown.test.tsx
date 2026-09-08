@@ -4,6 +4,10 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AdapterAccountDropdown } from "./AdapterAccountDropdown";
+import { listAdapterOptions } from "../adapters/metadata";
+
+/** The two adapters the fixtures hold accounts for. */
+const FIXTURE_ACCOUNT_TYPES = new Set(["codex_local", "claude_local"]);
 
 const mockAdapterAccountsApi = vi.hoisted(() => ({ list: vi.fn() }));
 vi.mock("../api/adapterAccounts", () => ({ adapterAccountsApi: mockAdapterAccountsApi }));
@@ -248,5 +252,56 @@ describe("AdapterAccountDropdown", () => {
     expect(trigger()?.textContent).not.toContain("acct-x");
     expect(trigger()?.textContent).toContain("Wrong account");
     expect(trigger()?.title).toContain("acct-x");
+  });
+  it("offers a vendor that has no accounts, and lets it be selected", async () => {
+    // Most adapters declare no account binding at all, so the account listing
+    // can never be what decides which vendors exist.
+    const vendor = listAdapterOptions().find(
+      (option) => !option.comingSoon && !FIXTURE_ACCOUNT_TYPES.has(option.value),
+    );
+    expect(vendor).toBeTruthy();
+
+    const { onSelect } = await render();
+    const row = defaultRow(vendor!.value);
+    expect(row).toBeTruthy();
+    expect(row?.disabled).toBe(false);
+    await act(async () => row?.click());
+
+    expect(onSelect).toHaveBeenCalledWith({
+      adapterType: vendor!.value,
+      account: null,
+      clearEnvKeys: ["CODEX_HOME", "CLAUDE_CONFIG_DIR"],
+    });
+  });
+
+  it("keeps a coming-soon vendor unselectable", async () => {
+    const vendor = listAdapterOptions().find((option) => option.comingSoon);
+    expect(vendor).toBeTruthy();
+
+    const { onSelect } = await render();
+    const row = defaultRow(vendor!.value);
+    expect(row?.disabled).toBe(true);
+    row?.focus();
+    expect(document.activeElement).not.toBe(row);
+    await act(async () => row?.click());
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("offers the whole adapter registry minus disabledTypes when there are no accounts", async () => {
+    mockAdapterAccountsApi.list.mockResolvedValue([]);
+    const hidden = "http";
+    await render({ disabledTypes: new Set([hidden]) });
+
+    const offered = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-default-row]"),
+    ).map((node) => node.dataset.defaultRow);
+    const expected = listAdapterOptions()
+      .map((option) => option.value)
+      .filter((type) => type !== hidden);
+
+    expect(offered).toEqual(expected);
+    // Guards the assertion above against passing on a one-or-two-entry list,
+    // which is all an account-derived vendor list could ever produce.
+    expect(offered.length).toBeGreaterThan(2);
   });
 });

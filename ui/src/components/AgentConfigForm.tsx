@@ -169,9 +169,10 @@ export function supportsAdapterModelRefresh(adapterType: string): boolean {
  * everything unrelated — is testable without rendering the form.
  *
  * The binding carries no `version`. Every reader of an agent env `secret_ref`
- * resolves a missing version as `"latest"` (see `collectAgentSecretRefs`), so
- * an omitted selector and an explicit `"latest"` name the same version; the
- * environment editor writes the explicit form back on the first hand edit.
+ * resolves a missing version as `"latest"` (see `collectSecretRefs` in
+ * `server/src/services/agent-secret-bindings.ts`), so an omitted selector and
+ * an explicit `"latest"` name the same version; the environment editor writes
+ * the explicit form back on the first hand edit.
  */
 export function buildAccountEnvUpdate(
   currentEnv: Record<string, EnvBinding>,
