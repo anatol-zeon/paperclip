@@ -599,6 +599,17 @@ export const queryKeys = {
   cloud: {
     stacks: ["cloud", "stacks"] as const,
   },
+  adapterAccounts: {
+    /**
+     * The company's selectable vendor accounts. One entry per company, so every
+     * mounted account picker shares a single listing rather than each issuing
+     * its own — the server resolves every account's secret to answer, and each
+     * resolve writes an audit event and bumps that secret's `lastResolvedAt`.
+     * `null` (no company selected) keys a fetch that never runs.
+     */
+    list: (companyId: string | null) =>
+      ["adapter-accounts", companyId ?? "none"] as const,
+  },
   secrets: {
     list: (companyId: string) => ["secrets", companyId] as const,
     providers: (companyId: string) => ["secret-providers", companyId] as const,

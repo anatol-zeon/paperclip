@@ -50,6 +50,11 @@ const MISMATCHED = { ...CODEX_A, handle: "acct-x", label: null, secretId: "s-x",
 
 describe("AdapterAccountDropdown", () => {
   let container: HTMLDivElement;
+  // Every root a test mounts, so `afterEach` can tear it down. Wiping the DOM
+  // is not enough: an abandoned root keeps its Radix dismissable layer's
+  // document-level listeners and its focus guards alive, and those leaked
+  // layers stop a LATER test's popover from opening at all.
+  let roots: { unmount: () => void }[] = [];
 
   beforeEach(() => {
     container = document.createElement("div");
@@ -57,7 +62,11 @@ describe("AdapterAccountDropdown", () => {
     mockAdapterAccountsApi.list.mockResolvedValue([CODEX_A, CODEX_B, CLAUDE_C]);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    for (const root of roots) {
+      await act(async () => root.unmount());
+    }
+    roots = [];
     container.remove();
     document.body.innerHTML = "";
     vi.clearAllMocks();
@@ -66,6 +75,7 @@ describe("AdapterAccountDropdown", () => {
   async function render(props: Partial<Parameters<typeof AdapterAccountDropdown>[0]> = {}) {
     const onSelect = vi.fn();
     const root = createRoot(container);
+    roots.push(root);
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     await act(async () => {
       root.render(
@@ -93,6 +103,15 @@ describe("AdapterAccountDropdown", () => {
 
   function accountButtons() {
     return Array.from(document.querySelectorAll<HTMLButtonElement>("[data-account-row]"));
+  }
+
+  /** The popover content is portalled out, so the trigger is what stays here. */
+  function trigger() {
+    return container.querySelector<HTMLButtonElement>("button");
+  }
+
+  function defaultRow(type = "codex_local") {
+    return document.querySelector<HTMLButtonElement>(`[data-default-row='${type}']`);
   }
 
   it("lists every account with its email under its vendor", async () => {
@@ -162,5 +181,58 @@ describe("AdapterAccountDropdown", () => {
     );
     expect(selected).toHaveLength(1);
     expect(selected[0]?.textContent).toContain("xxx@gmail.com");
+  });
+
+  it("does not offer the company default while the account list is still loading", async () => {
+    mockAdapterAccountsApi.list.mockReturnValue(new Promise(() => {}));
+    const { onSelect } = await render();
+    const row = defaultRow();
+    expect(row?.disabled).toBe(true);
+    await act(async () => row?.click());
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("does not offer the company default when the account list failed to load", async () => {
+    // react-query reports a failed query as `isPending === false`, so a gate on
+    // `!isPending` would re-enable the row here against an empty account set.
+    mockAdapterAccountsApi.list.mockRejectedValue(new Error("listing unavailable"));
+    const { onSelect } = await render();
+    const row = defaultRow();
+    expect(row?.disabled).toBe(true);
+    expect(row?.title).toContain("load");
+    await act(async () => row?.click());
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("clears a disabled adapter's account key too", async () => {
+    const { onSelect } = await render({ disabledTypes: new Set(["claude_local"]) });
+    const row = defaultRow();
+    await act(async () => row?.click());
+
+    expect(onSelect).toHaveBeenCalledWith({
+      adapterType: "codex_local",
+      account: null,
+      clearEnvKeys: ["CODEX_HOME", "CLAUDE_CONFIG_DIR"],
+    });
+  });
+
+  it("names an unavailable selection by its state, never by its raw handle", async () => {
+    mockAdapterAccountsApi.list.mockResolvedValue([
+      { ...CODEX_A, label: null, status: "unavailable" as const },
+    ]);
+    await render({ envBindings: { CODEX_HOME: { type: "secret_ref", secretId: "s-a" } } });
+
+    expect(trigger()?.textContent).not.toContain("acct-a");
+    expect(trigger()?.textContent).toContain("Needs login");
+    expect(trigger()?.title).toContain("acct-a");
+  });
+
+  it("names a mismatched selection as a mismatch, never by its raw handle", async () => {
+    mockAdapterAccountsApi.list.mockResolvedValue([MISMATCHED]);
+    await render({ envBindings: { CODEX_HOME: { type: "secret_ref", secretId: "s-x" } } });
+
+    expect(trigger()?.textContent).not.toContain("acct-x");
+    expect(trigger()?.textContent).toContain("Wrong account");
+    expect(trigger()?.title).toContain("acct-x");
   });
 });
