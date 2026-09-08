@@ -316,4 +316,20 @@ describe("AdapterAccountDropdown", () => {
     // which is all an account-derived vendor list could ever produce.
     expect(offered.length).toBeGreaterThan(2);
   });
+  it("does not mark the company default as selected when the listing failed", async () => {
+    // Until the listing resolves nothing can be recognised as bound, so an
+    // unguarded mark claims the agent is on the company default when it is not
+    // — and a failed listing never resolves, making that claim permanent.
+    mockAdapterAccountsApi.list.mockRejectedValue(new Error("listing unavailable"));
+    await render({ envBindings: { CODEX_HOME: { type: "secret_ref", secretId: "s-a" } } });
+
+    expect(defaultRow()?.className).not.toContain("bg-accent");
+  });
+
+  it("marks the company default as selected once the listing shows nothing bound", async () => {
+    // The counterpart: the mark is guarded, not removed.
+    await render();
+
+    expect(defaultRow()?.className).toContain("bg-accent");
+  });
 });

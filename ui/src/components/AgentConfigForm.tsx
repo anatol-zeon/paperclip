@@ -60,6 +60,7 @@ import {
   DraftNumberInput,
   help,
   adapterLabels,
+  ExperimentalBadge,
 } from "./agent-config-primitives";
 import { defaultCreateValues } from "./agent-config-defaults";
 import { getUIAdapter } from "../adapters";
@@ -3394,14 +3395,6 @@ export function AdapterTypeDropdown({
         ))}
       </PopoverContent>
     </Popover>
-  );
-}
-
-function ExperimentalBadge() {
-  return (
-    <span className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-(length:--text-nano) font-medium leading-none text-amber-700 dark:text-amber-200">
-      Experimental
-    </span>
   );
 }
 

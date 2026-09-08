@@ -26,6 +26,7 @@ import { queryKeys } from "../lib/queryKeys";
 import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { ExperimentalBadge } from "./agent-config-primitives";
 
 /**
  * What one click on the picker means. The component emits the whole instruction
@@ -87,15 +88,6 @@ interface VendorRow {
   comingSoon: boolean;
   experimental: boolean;
   accounts: AdapterAccount[];
-}
-
-/** Kept identical to `AgentConfigForm`'s own badge, which is private to it. */
-function ExperimentalBadge() {
-  return (
-    <span className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-(length:--text-nano) font-medium leading-none text-amber-700 dark:text-amber-200">
-      Experimental
-    </span>
-  );
 }
 
 export function AdapterAccountDropdown({
@@ -169,10 +161,11 @@ export function AdapterAccountDropdown({
   // `AdapterTypeDropdown` filters it. Accounts are attached to the vendors that
   // have them; a vendor with none is still offered, because most adapters
   // declare no account binding at all and every one of them still has to be
-  // selectable. An account whose adapter is not registered here is not shown —
-  // the same type `AdapterTypeDropdown` would never have offered either — but
-  // its env key still reaches `allEnvKeys` above, so a switch away still clears
-  // it.
+  // selectable. An account whose adapter is not registered here is neither
+  // shown — the same type `AdapterTypeDropdown` would never have offered
+  // either — nor cleared, since `allEnvKeys` is built from that same registry.
+  // What keeps that from mattering is `metadata.test.ts`: it fails the moment
+  // the UI and server registries disagree about which adapters bind accounts.
   const vendors = useMemo<VendorRow[]>(() => {
     const byType = new Map<string, AdapterAccount[]>();
     for (const account of visible) {
@@ -248,12 +241,6 @@ export function AdapterAccountDropdown({
             <button
               type="button"
               data-default-row={vendor.type}
-              // Gated on `isSuccess`, never on `!isPending`: react-query reports
-              // a failed query as `isPending === false` with `data` undefined,
-              // so a `!isPending` gate would re-enable this row against an empty
-              // account set — clearing nothing on exactly the path where a user
-              // is most likely to retry, and leaving the previous vendor's home
-              // bound while the UI claims the company default.
               // No gate on the account query: `clearEnvKeys` is static, so
               // choosing the company default while the listing is pending or
               // has failed does exactly the right thing — clear every account
@@ -262,7 +249,15 @@ export function AdapterAccountDropdown({
               className={cn(
                 "flex w-full items-center justify-between rounded px-2 py-1.5 text-sm",
                 vendor.comingSoon ? "cursor-not-allowed opacity-40" : "hover:bg-muted/60",
-                vendor.type === adapterType && selected === null && "bg-accent",
+                // `data !== undefined` guards the MARK, not the action: until
+                // the listing resolves `selected` is necessarily null, so
+                // without it this row paints itself as the active selection for
+                // an agent that is in fact bound to a specific account —
+                // transient while pending, permanent once the listing fails.
+                vendor.type === adapterType
+                  && selected === null
+                  && data !== undefined
+                  && "bg-accent",
               )}
               onClick={() => {
                 if (vendor.comingSoon) return;

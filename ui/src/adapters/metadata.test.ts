@@ -6,6 +6,10 @@ import {
   listAdapterOptions,
 } from "./metadata";
 import type { UIAdapterModule } from "./types";
+// Deliberately the real server registry across the package boundary, not a
+// mock: mocking it would compare the UI's keys against a fixture and reduce
+// this to the two-empty-objects case the `length > 0` guard below exists to
+// catch, which is precisely the drift it is meant to detect.
 import { listServerAdapters } from "../../../server/src/adapters/registry.js";
 
 const externalAdapter: UIAdapterModule = {
