@@ -1,5 +1,5 @@
 import { canonicalJson, sha256File, sha256Tree, prepareProviderTree, writeProviderTreeSidecar } from "./provider-pack-integrity.mjs";
-import { normalizeProviderPackLayout } from "./provider-pack-layout.mjs";
+import { normalizeProviderPackLayout, normalizeProviderPackMetadata } from "./provider-pack-layout.mjs";
 import { portableProviderShim } from "./portable-provider-shim.mjs";
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -157,6 +157,8 @@ try {
     ),
     { recursive: true, force: true },
   );
+
+  normalizeProviderPackMetadata(temporaryRoot);
 
   for (const shimName of readdirSync(
     join(temporaryRoot, "node_modules", ".bin"),
