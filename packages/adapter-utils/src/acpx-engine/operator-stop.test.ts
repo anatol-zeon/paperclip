@@ -82,3 +82,19 @@ it.each(['missing session', 'changed configuration'])('refuses fresh-session fal
   expect(next.exitCode).not.toBe(0);
   expect((await fs.readFile(path.join(root, 'prompts'), 'utf8')).trim().split('\n')).toHaveLength(1);
 });
+
+it('keeps the Stop deadline active after cancellation returns until provider exit', async () => {
+  const { ctx, abort, started, execute } = await setup();
+  ctx.config.graceSec = 1;
+  ctx.config.env = { ...(ctx.config.env as object), PAPERCLIP_STOP_FIXTURE_HANG_ON_CLOSE: '1' };
+  let providerPid: number | undefined;
+  ctx.onSpawn = async ({ pid }) => { providerPid = pid; };
+  const running = execute(ctx);
+  await started;
+  abort.abort();
+  const result = await running;
+  expect(result.resultJson?.executionCancellation).toMatchObject({ state: 'acknowledged', forced: true });
+  expect(result.executionRecovery).toBeUndefined();
+  expect(providerPid).toBeTypeOf('number');
+  expect(() => process.kill(providerPid!, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }));
+}, 10000);

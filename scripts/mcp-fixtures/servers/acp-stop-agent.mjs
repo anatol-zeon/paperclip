@@ -7,6 +7,10 @@ const root = process.env.PAPERCLIP_STOP_FIXTURE_ROOT ?? process.cwd();
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 let active;
 let timer;
+if (process.env.PAPERCLIP_STOP_FIXTURE_HANG_ON_CLOSE === '1') {
+  process.on('SIGTERM', () => {});
+  setInterval(() => {}, 1000);
+}
 const update = (sessionId, value) => send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: value } });
 async function request(message) {
   fs.appendFileSync(`${root}/requests`, `${Date.now()} ${message.method}\n`);

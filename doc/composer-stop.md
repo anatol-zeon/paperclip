@@ -53,7 +53,8 @@ It covers the queued-follow-up sequence (queue a second request, stop, then send
 same-session delivery of both messages, and an unfinished write that stops
 mutating its file but retains a visible execution blocker. Unit and integration
 tests additionally cover pre-start Stop, unavailable/changed sessions, rotating
-scratch directories, cancellation acknowledgment, deferred-wake adoption, and
+scratch directories, cancellation acknowledgment, a provider that hangs during
+cleanup after returning cancellation, deferred-wake adoption, and
 company-scoped blocker lookup. Hosted-provider behavior is a separate smoke test.
 
 The browser tests also require the continued provider to complete the task through

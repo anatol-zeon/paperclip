@@ -4595,14 +4595,20 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
           signal,
         });
         activeTurn = turn;
-        // ACP resolves the terminal result before draining/closing its process.
-        // Provider cleanup may take longer than the cancellation grace period.
-        void turn.result.then(() => clearTimeout(stopTimer), () => clearTimeout(stopTimer));
+        // ACP can resolve the turn before its provider exits. Keep the Stop
+        // deadline armed through settlement, including provider cleanup.
         const armStopDeadline = () => {
           stopTimer = setTimeout(() => {
             forcedStop = true;
-            void runtime.close({ handle: sessionHandle, reason: "operator stop deadline", discardPersistentState: true })
-              .catch(() => {});
+            const providerPid = processIdentitySink.latest?.pid;
+            if (providerPid && !prepared.processSessionBridge) {
+              // Escalate the owned local process directly. A second ACP close
+              // can wait behind the same hung cleanup (or open a new client).
+              try { process.kill(providerPid, "SIGKILL"); } catch { /* Already exited or unverified. */ }
+            } else {
+              void runtime.close({ handle: sessionHandle, reason: "operator stop deadline", discardPersistentState: true })
+                .catch(() => {});
+            }
           }, Math.max(1, asNumber(ctx.config.graceSec, 15)) * 1000);
         };
         ctx.signal?.addEventListener("abort", armStopDeadline, { once: true });
@@ -4653,7 +4659,6 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
         input: TurnFinalizeInput<AcpRuntimeTurnResult>,
       ): Promise<TurnCompletion> => {
         if (input.kind === "terminal") {
-        clearTimeout(stopTimer);
         const terminal = input.terminal;
         const timedOut = input.timedOut;
         // Read the sandbox duplex control-channel disposition at the ACP
