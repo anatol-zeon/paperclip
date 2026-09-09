@@ -168,7 +168,8 @@ describe("runner E2E Daytona image contract", () => {
 
   it("exports the canonical provider stage without a mutable base or recursive builder", async () => {
     const dockerfile = await readFile(path.join(repositoryRoot, "docker/daytona-runner/Dockerfile"), "utf8");
-    expect(dockerfile).toContain("FROM scratch AS provider-pack-export\nCOPY --from=provider-pack-build /provider-pack /");
+    const exportStage = dockerfile.split(/^FROM /m).find((stage) => stage.startsWith("scratch AS provider-pack-export\n"));
+    expect(exportStage).toMatch(/^COPY --from=provider-pack-build \/provider-pack \/provider-pack$/m);
     expect(extractDaytonaBaseImages(dockerfile)).not.toContain("scratch");
     expect(() => extractDaytonaBaseImages("FROM node:latest\nFROM scratch AS exported")).toThrow("immutable");
     const builder = await readFile(path.join(repositoryRoot, "packages/paperclip-runner/scripts/build-provider-pack.mjs"), "utf8");
