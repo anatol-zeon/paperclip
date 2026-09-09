@@ -35,9 +35,9 @@ of external effects through the existing reconciliation API before continuing.
 
 Embedded ACP also supports verified continuation of an interrupted local session.
 The adapter must acknowledge cancellation and prove a preserved session with
-settled read-only work. Stop waits for provider cleanup. Forced local termination verifies the OS process
-identity captured at spawn before sending a signal; missing or changed identities
-do not authorize a signal or replay. Unknown actions remain
+settled read-only work. Stop waits for provider cleanup. Forced local termination uses the actual
+child-process handle captured at spawn, including on Windows. An unavailable
+handle does not authorize a signal or replay. Unknown actions remain
 blocked, and task detail shows the reason even after recovery bookkeeping resolves.
 A run-level Stop leaves the task unpaused; a subsequent comment can continue the
 same session with the earlier queued messages. Composer Stop still creates a

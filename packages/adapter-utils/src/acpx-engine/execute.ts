@@ -35,7 +35,7 @@ import {
   type ReferencedSourceIgnoreResolution,
   type SandboxAdditionalSource,
 } from "@paperclipai/adapter-utils/execution-target";
-import { killVerifiedLocalProcess, readLocalProcessIdentity } from "./local-process-identity.js";
+import { captureLocalProcess, capturedProcessExited, killCapturedLocalProcess } from "./local-process-control.js";
 import type { DuplexLossReason } from "../duplex-observability.js";
 import { DUPLEX_CHANNEL_LOST_ERROR_CODE } from "../bridge-transport-contract.js";
 import type { WorkspaceRestoreFailureCode, WorkspaceRestoreOutcome } from "../workspace-restore-merge.js";
@@ -3790,7 +3790,6 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
     // `buildRuntime` already released its own partial lease).
     let releaseStagingLease: (() => void) | null = null;
     let stopTimer: ReturnType<typeof setTimeout> | undefined;
-    let localStopEscalation: Promise<boolean> | undefined;
     let removeStopListener: (() => void) | undefined;
     let forcedStop = false;
     let runtimeStopConfirmed = false;
@@ -4097,7 +4096,7 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
             : undefined,
           onAgentSpawn: async (meta) => {
             processIdentitySink.latest = meta;
-            processIdentitySink.localProcessIdentity = prepared.processSessionBridge ? null : await readLocalProcessIdentity(meta.pid);
+            processIdentitySink.localProcess = prepared.processSessionBridge ? undefined : captureLocalProcess(meta.pid);
             await processIdentitySink.current?.({
               pid: meta.pid,
               processGroupId: null,
@@ -4607,7 +4606,7 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
             if (providerPid && !prepared.processSessionBridge) {
               // Escalate the owned local process directly. A second ACP close
               // can wait behind the same hung cleanup (or open a new client).
-              localStopEscalation = killVerifiedLocalProcess(providerPid, processIdentitySink.localProcessIdentity);
+              killCapturedLocalProcess(processIdentitySink.localProcess);
             } else {
               void runtime.close({ handle: sessionHandle, reason: "operator stop deadline", discardPersistentState: true })
                 .catch(() => {});
@@ -5144,15 +5143,11 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
             throw new Error("run coordinator reproduced a result before the run recorded one");
           }
           clearTimeout(stopTimer);
-          // Do not leave an asynchronous identity check capable of signalling
-          // after this execution has returned and released its ownership.
-          await localStopEscalation;
           let providerExited = false;
           const providerPid = processIdentitySink?.latest?.pid;
           if (ctx.signal?.aborted && providerPid && !prepared.processSessionBridge) {
             for (let attempt = 0; attempt < 40; attempt += 1) {
-              try { process.kill(providerPid, 0); }
-              catch (error) { providerExited = (error as NodeJS.ErrnoException).code === "ESRCH"; }
+              providerExited = capturedProcessExited(processIdentitySink.localProcess);
               if (providerExited || !forcedStop) break;
               await new Promise((resolve) => setTimeout(resolve, 25));
             }
