@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { terminalizeLegacyExecution } from "../services/legacy-execution-recovery.js";
+import { getExecutionBlocker } from "../services/execution-blocker.js";
 import { adapterExecutionControls, createAdapterExecutionControl } from "../services/adapter-execution-control.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs/promises";
@@ -1364,6 +1366,27 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
     expect(run).toMatchObject({ status: "failed" });
     expect(recoveryRuns).toHaveLength(0);
+  });
+
+  it("keeps an unsafe Stop blocked when recovery sees a deferred human comment", async () => {
+    const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
+      status: "in_progress", runStatus: "cancelled",
+      resultJson: { executionCancellation: { state: "acknowledged" } },
+    });
+    const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
+    await terminalizeLegacyExecution({ db, run, status: "cancelled" });
+    const wakeId = randomUUID();
+    await db.insert(agentWakeupRequests).values({
+      id: wakeId, companyId, agentId, source: "on_demand", triggerDetail: "manual",
+      reason: "issue_commented", payload: { issueId }, status: "deferred_issue_execution",
+    });
+
+    expect(await getExecutionBlocker(db, companyId, issueId)).toMatchObject({ runId });
+    await heartbeatService(db).reconcileStrandedAssignedIssues();
+    expect(await getExecutionBlocker(db, companyId, issueId)).toMatchObject({ runId });
+    const [wake] = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, wakeId));
+    expect(wake.status).toBe("deferred_issue_execution");
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.retryOfRunId, runId))).toHaveLength(0);
   });
 
   it("leaves hidden issues out of stranded-issue reconciliation", async () => {
