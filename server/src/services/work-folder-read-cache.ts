@@ -2,14 +2,14 @@ import { captureSandboxPerformanceContext, measureSandboxOperation, measureSandb
 import { Readable } from "node:stream";
 import type { WorkTreeEntry } from "./work-folder-transport.js";
 
-const MAX_BATCH_BYTES = 1024 * 1024;
+export const WORK_FOLDER_READ_BATCH_MAX_BYTES = 1024 * 1024;
 const MAX_BATCH_ENTRIES = 64;
 const MAX_CACHED_BATCHES = 4;
 
 /**
  * A checkpoint-local cache, not a snapshot or a retry source. The caller limits
- * concurrent readers to four. At most four 1 MiB batches stay cached; evicted
- * batches held by those active readers can add at most another 4 MiB. Larger
+ * concurrent batch readers to sixteen. At most four 1 MiB batches stay cached;
+ * evicted batches held by active readers can add at most another 16 MiB. Larger
  * files use the separately bounded streaming fallback. Metadata is O(entries).
  */
 export function createWorkFolderReadCache(
@@ -21,8 +21,8 @@ export function createWorkFolderReadCache(
   let batch: WorkTreeEntry[] = [];
   let batchBytes = 0;
   for (const entry of entries) {
-    if (entry.kind !== "file" || entry.linkTarget || entry.byteSize > MAX_BATCH_BYTES) continue;
-    if (batch.length >= MAX_BATCH_ENTRIES || batchBytes + entry.byteSize > MAX_BATCH_BYTES) {
+    if (entry.kind !== "file" || entry.linkTarget || entry.byteSize > WORK_FOLDER_READ_BATCH_MAX_BYTES) continue;
+    if (batch.length >= MAX_BATCH_ENTRIES || batchBytes + entry.byteSize > WORK_FOLDER_READ_BATCH_MAX_BYTES) {
       batch = []; batchBytes = 0;
     }
     locations.set(entry.path, { batch, index: batch.length });

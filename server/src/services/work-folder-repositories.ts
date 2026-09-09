@@ -1,5 +1,5 @@
 import { measureSandboxOperation, measureSandboxStream } from "./sandbox-performance.js";
-import { createWorkFolderReadCache } from "./work-folder-read-cache.js";
+import { createWorkFolderReadCache, WORK_FOLDER_READ_BATCH_MAX_BYTES } from "./work-folder-read-cache.js";
 import { prefetchWorkFiles } from "./work-folder-transfer.js";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull } from "drizzle-orm";
@@ -58,32 +58,42 @@ export function workFolderRepositoryService(db: Db, storage: StorageProvider, tr
     const readCache = transport.readBatch ? createWorkFolderReadCache([...unknown.values()],
       (entries) => transport.readBatch!(root, entries),
       (entry) => transport.read(root, entry.path, entry.byteSize)) : undefined;
-    let next = 0;
+    // Small, batch-readable objects mostly wait for object-store round trips.
+    // Give them a wider bounded lane without multiplying large remote streams.
+    // With no batch transport, all objects retain the four-stream limit.
+    const indexedObjects = objects.map((object, fileIndex) => ({ object, fileIndex }));
+    const lanes = [
+      { parallelism: 16, objects: indexedObjects.filter(({ object: [, entry] }) => readCache && entry.byteSize <= WORK_FOLDER_READ_BATCH_MAX_BYTES) },
+      { parallelism: 4, objects: indexedObjects.filter(({ object: [, entry] }) => !readCache || entry.byteSize > WORK_FOLDER_READ_BATCH_MAX_BYTES) },
+    ];
     let failure: { error: unknown } | undefined;
     try {
-      await Promise.all(Array.from({ length: Math.min(4, objects.length) }, async () => {
-        while (!failure) {
-          const fileIndex = next++;
-          const object = objects[fileIndex];
-          if (!object) return;
-          const [objectKey, entry] = object;
-          try {
-            await measureSandboxOperation("work_folder.repository.object_intent", { fileIndex }, () => registerWorkFolderObject(db, storage, { objectKey, companyId: binding.companyId, repositoryBindingId: binding.id }));
-            if (failure) return;
-            const { exists } = await measureSandboxOperation("work_folder.repository.object_head", { fileIndex, bytes: entry.byteSize, requestCount: 1 }, async (span) => {
-              const result = await storage.headObject({ objectKey }); span.set({ exists: result.exists }); return result;
-            });
-            if (!exists && !failure) {
-              await measureSandboxOperation("work_folder.repository.object_upload", { fileIndex, bytes: entry.byteSize, parallelism: 4 }, () => uploadWorkFolderObject(storage, { objectKey, contentType: "application/octet-stream",
-                contentLength: entry.byteSize, sha256: entry.sha256!,
-                createSource: () => readCache ? readCache.read(entry) : transport.read(root, entry.path, entry.byteSize) }));
+      await Promise.all(lanes.map(async (lane) => {
+        let next = 0;
+        await Promise.all(Array.from({ length: Math.min(lane.parallelism, lane.objects.length) }, async () => {
+          while (!failure) {
+            const item = lane.objects[next++];
+            if (!item) return;
+            const { object, fileIndex } = item;
+            const [objectKey, entry] = object;
+            try {
+              await measureSandboxOperation("work_folder.repository.object_intent", { fileIndex }, () => registerWorkFolderObject(db, storage, { objectKey, companyId: binding.companyId, repositoryBindingId: binding.id }));
+              if (failure) return;
+              const { exists } = await measureSandboxOperation("work_folder.repository.object_head", { fileIndex, bytes: entry.byteSize, requestCount: 1 }, async (span) => {
+                const result = await storage.headObject({ objectKey }); span.set({ exists: result.exists }); return result;
+              });
+              if (!exists && !failure) {
+                await measureSandboxOperation("work_folder.repository.object_upload", { fileIndex, bytes: entry.byteSize, parallelism: lane.parallelism }, () => uploadWorkFolderObject(storage, { objectKey, contentType: "application/octet-stream",
+                  contentLength: entry.byteSize, sha256: entry.sha256!,
+                  createSource: () => readCache ? readCache.read(entry) : transport.read(root, entry.path, entry.byteSize) }));
+              }
+            } catch (error) {
+              // Stop scheduling after the first error, but drain the other workers
+              // before returning. Their streaming PUTs must not outlive this save.
+              failure ??= { error };
             }
-          } catch (error) {
-            // Stop scheduling after the first error, but drain the other workers
-            // before returning. Their streaming PUTs must not outlive this save.
-            failure ??= { error };
           }
-        }
+        }));
       }));
     } finally { readCache?.clear(); }
     if (failure) throw failure.error;

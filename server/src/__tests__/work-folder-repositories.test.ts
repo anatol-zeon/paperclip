@@ -36,7 +36,7 @@ describe("bounded repository checkpoint transfers", () => {
   afterEach(() => vi.restoreAllMocks());
   afterAll(async () => { await database?.cleanup(); });
 
-  async function fixture() {
+  async function fixture(batched = false) {
     const taskId = randomUUID();
     await db.insert(issues).values({ id: taskId, companyId, title: "Checkpoint" });
     const [binding] = await db.insert(taskRepositoryBindings).values({ companyId, taskId,
@@ -47,7 +47,8 @@ describe("bounded repository checkpoint transfers", () => {
     let entries: WorkTreeEntry[] = [];
     const scan = vi.fn(async () => entries);
     const transport: WorkFolderTransport = {
-      home: async () => "/home/runner", scan, readBatch: undefined,
+      home: async () => "/home/runner", scan,
+      readBatch: batched ? vi.fn(async (_root, entries) => entries.map((entry) => contents.get(entry.path)!)) : undefined,
       read: vi.fn((_root, filePath) => {
         const source = Readable.from([contents.get(filePath)!]);
         sources.push(source);
@@ -186,14 +187,61 @@ describe("bounded repository checkpoint transfers", () => {
     expect(f.sources.every((source) => source.destroyed)).toBe(true);
   });
 
-  it("drains in-flight PUTs after failure without scheduling more blobs or replacing the protected checkpoint", async () => {
-    const f = await fixture();
+  it("overlaps sixteen batch-readable blobs while keeping large streams bounded to four", async () => {
+    const f = await fixture(true);
+    const entries = Array.from({ length: 24 }, (_, i) => f.file(`small-${i}`));
+    entries.splice(1, 0, ...Array.from({ length: 6 }, (_, i) => f.file(`large-${i}`, `${i}`.repeat(1024 * 1024 + 1))));
+    const largeKeys = new Set(entries.filter((entry) => entry.byteSize > 1024 * 1024).map((entry) => entry.sha256));
+    f.setEntries(entries);
+    const headGate = gate(), putGate = gate();
+    const activeHeads = [0, 0], activePuts = [0, 0], maxHeads = [0, 0], maxPuts = [0, 0];
+    const lane = (key: string) => largeKeys.has(key.split("/").at(-1)!) ? 1 : 0;
+    f.headObject.mockImplementation(async ({ objectKey }) => {
+      const index = lane(objectKey);
+      activeHeads[index]!++;
+      maxHeads[index] = Math.max(maxHeads[index]!, activeHeads[index]!);
+      try { await headGate.promise; return { exists: false }; } finally { activeHeads[index]!--; }
+    });
+    const put = f.putObject.getMockImplementation()!;
+    f.putObject.mockImplementation(async (input) => {
+      if (!input.objectKey.includes("/blobs/")) return put(input);
+      const index = lane(input.objectKey);
+      activePuts[index]!++;
+      maxPuts[index] = Math.max(maxPuts[index]!, activePuts[index]!);
+      try { await putGate.promise; await put(input); } finally { activePuts[index]!--; }
+    });
+    const saving = f.save();
+    try {
+      await vi.waitFor(() => expect(activeHeads).toEqual([16, 4]));
+      expect(f.headObject).toHaveBeenCalledTimes(20);
+      headGate.release();
+      await vi.waitFor(() => expect(activePuts).toEqual([16, 4]));
+      expect(f.headObject).toHaveBeenCalledTimes(20);
+      expect((await f.current()).checkpointKey).toBeNull();
+    } finally { headGate.release(); putGate.release(); }
+    await saving;
+    expect(maxHeads).toEqual([16, 4]);
+    expect(maxPuts).toEqual([16, 4]);
+    expect(f.headObject).toHaveBeenCalledTimes(30);
+    const manifest = JSON.parse(f.objects.get(f.binding.checkpointKey!)!.toString("utf8"));
+    expect(manifest.files.map(({ objectKey: _key, ...entry }: WorkTreeEntry & { objectKey: string }) => entry)).toEqual(entries);
+    expect(f.transport.read).toHaveBeenCalledTimes(6);
+    expect(f.sources.every((source) => source.destroyed)).toBe(true);
+    for (const [, group] of vi.mocked(f.transport.readBatch!).mock.calls) {
+      expect(group.reduce((size, entry) => size + entry.byteSize, 0)).toBeLessThanOrEqual(1024 * 1024);
+      expect(group).toHaveLength(24);
+    }
+  });
+
+  it.each([false, true])("drains in-flight PUTs after failure without replacing the checkpoint (batched=%s)", async (batched) => {
+    const f = await fixture(batched);
+    const parallelism = batched ? 16 : 4;
     const original = f.file("saved");
     f.setEntries([original]);
     await f.save();
     const previous = await f.current();
     const failed = f.file("fail"), queued = f.file("must-not-start");
-    f.setEntries([original, failed, f.file("held-a"), f.file("held-b"), f.file("held-c"), queued]);
+    f.setEntries([original, failed, ...Array.from({ length: parallelism - 1 }, (_, i) => f.file(`held-${i}`)), queued]);
     const failedKey = `${companyId}/task-repositories/${f.binding.id}/blobs/${failed.sha256}`;
     const queuedKey = `${companyId}/task-repositories/${f.binding.id}/blobs/${queued.sha256}`;
     const fail = gate(), held = gate();
@@ -214,9 +262,9 @@ describe("bounded repository checkpoint transfers", () => {
     const outcome = f.save().then(() => ({ error: null }), (failure: unknown) => ({ error: failure }))
       .finally(() => { settled = true; });
     try {
-      await vi.waitFor(() => expect(active).toBe(4));
+      await vi.waitFor(() => expect(active).toBe(parallelism));
       fail.release();
-      await vi.waitFor(() => expect(active).toBe(3));
+      await vi.waitFor(() => expect(active).toBe(parallelism - 1));
       await setImmediate();
       expect(settled).toBe(false);
       expect((await f.current()).checkpointKey).toBe(previous.checkpointKey);
@@ -231,13 +279,14 @@ describe("bounded repository checkpoint transfers", () => {
     const tracked = await db.select().from(workFolderObjects).where(eq(workFolderObjects.repositoryBindingId, f.binding.id));
     expect(tracked.find((object) => object.objectKey === previous.checkpointKey)!.deleteAfter).toBeNull();
     expect(tracked.find((object) => object.objectKey.endsWith(`/blobs/${original.sha256}`))!.deleteAfter).toBeNull();
-    expect(tracked.filter((object) => object.deleteAfter !== null)).toHaveLength(4);
+    expect(tracked.filter((object) => object.deleteAfter !== null)).toHaveLength(parallelism);
   });
 
-  it("drains failed concurrent HEADs without opening more file streams", async () => {
-    const f = await fixture();
+  it.each([false, true])("drains failed concurrent HEADs without opening streams (batched=%s)", async (batched) => {
+    const f = await fixture(batched);
+    const parallelism = batched ? 16 : 4;
     const first = f.file("fail-head");
-    f.setEntries([first, f.file("two"), f.file("three"), f.file("four"), f.file("queued")]);
+    f.setEntries([first, ...Array.from({ length: parallelism - 1 }, (_, i) => f.file(`held-${i}`)), f.file("queued")]);
     const fail = gate(), held = gate();
     const error = new Error("HEAD unavailable");
     let active = 0, settled = false;
@@ -252,16 +301,16 @@ describe("bounded repository checkpoint transfers", () => {
     const outcome = f.save().then(() => ({ error: null }), (failure: unknown) => ({ error: failure }))
       .finally(() => { settled = true; });
     try {
-      await vi.waitFor(() => expect(active).toBe(4));
+      await vi.waitFor(() => expect(active).toBe(parallelism));
       fail.release();
-      await vi.waitFor(() => expect(active).toBe(3));
+      await vi.waitFor(() => expect(active).toBe(parallelism - 1));
       await setImmediate();
       expect(settled).toBe(false);
       expect(f.sources).toHaveLength(0);
     } finally { fail.release(); held.release(); }
     expect((await outcome).error).toBe(error);
     expect(active).toBe(0);
-    expect(f.headObject).toHaveBeenCalledTimes(4);
+    expect(f.headObject).toHaveBeenCalledTimes(parallelism);
     expect(f.sources).toHaveLength(0);
     expect(f.putObject).not.toHaveBeenCalled();
     expect((await f.current()).checkpointKey).toBeNull();

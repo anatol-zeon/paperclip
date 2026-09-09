@@ -206,11 +206,12 @@ export async function runWithSandboxPerformanceTrace<T>(input: {
   finally {
     trace.closed = true;
     // No per-file DB writes, no synchronous exporter call and no unbounded
-    // promise queue. Persist at most 250 records per batch after measured work.
+    // promise queue. The run-log sanitizer allows fifty array items. Keep each
+    // batch within that bound so retained records are not silently truncated.
     // The SDK independently exports ended spans through its batch processor.
-    for (let offset = 0; offset < trace.records.length; offset += 250) {
+    for (let offset = 0; offset < trace.records.length; offset += 50) {
       try { await input.onBatch?.({ schema: "paperclip.sandbox-performance.v1", runHash: trace.runHash,
-        records: trace.records.slice(offset, offset + 250), dropped: trace.dropped }); } catch { break; }
+        records: trace.records.slice(offset, offset + 50), dropped: trace.dropped }); } catch { break; }
     }
   }
 }

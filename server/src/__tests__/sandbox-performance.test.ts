@@ -93,7 +93,7 @@ describe("sandbox performance trace", () => {
       for (let i = 0; i < 350; i++) await measureSandboxOperation("sandbox.read", { fileIndex: i }, async () => undefined);
       finished = true;
     });
-    expect(batches.map((batch) => batch.records.length)).toEqual([250, 50]);
+    expect(batches.map((batch) => batch.records.length)).toEqual([50, 50, 50, 50, 50, 50]);
     expect(batches.every((batch) => batch.dropped === 51)).toBe(true);
     const root = spans.find((span) => span.name === "sandbox.run")!;
     expect(root.attributes["paperclip.sandbox.recordCount"]).toBe(300);

@@ -247,10 +247,12 @@ either observes completion or fails visibly and retains the working copy for
 the next run's existing intent reconciliation. This does not make arbitrary
 sandbox commands or repository mutations retryable.
 
-Repository checkpoints transfer at most four distinct content-addressed blobs
-concurrently, avoiding duplicate uploads for identical files. Small-file reads
-are grouped into at most 1 MiB and 64 files per remote command, with at most
-four read batches cached per checkpoint. Larger files stream independently.
+Repository checkpoints transfer up to sixteen distinct batch-readable blobs
+of at most 1 MiB concurrently, plus at most four larger streaming blobs.
+Transports without batched reads retain the four-stream limit. Identical files
+share one content-addressed upload. Small-file reads are grouped into at most
+1 MiB and 64 files per remote command, with at most four read batches cached
+per checkpoint and sixteen additional batches held by active readers.
 Retries bypass that cache and reopen the actual file. All active transfers
 must settle, and a second filesystem scan must match, before the
 complete checkpoint reference can advance. Scoped-file retry receipts and
