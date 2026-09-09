@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
-import { issueRecoveryActions, type Db } from "@paperclipai/db";
+import { z } from "zod";
+import { heartbeatRuns, issueRecoveryActions, type Db } from "@paperclipai/db";
 import { EXECUTION_RECONCILIATION_CAUSES, type ExecutionBlocker } from "@paperclipai/shared";
 
 /** Resolved recovery bookkeeping can still carry an effective no-replay hold. */
@@ -18,11 +19,17 @@ export async function getExecutionBlocker(db: Db, companyId: string, issueId: st
     executionBlockerPredicate(),
   )).orderBy(desc(issueRecoveryActions.updatedAt), desc(issueRecoveryActions.id)).limit(1);
   if (!action) return null;
-  const runId = action.evidence.runId ?? action.evidence.sourceRunId;
+  const parsedRunId = z.string().guid().safeParse(action.evidence.runId ?? action.evidence.sourceRunId);
+  const runId = parsedRunId.success ? parsedRunId.data : null;
+  const [run] = runId ? await db.select({ agentId: heartbeatRuns.agentId }).from(heartbeatRuns).where(and(
+    eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.id, runId),
+  )).limit(1) : [];
+
   return {
     recoveryActionId: action.id,
-    runId: typeof runId === "string" ? runId : null,
-    agentId: action.returnOwnerAgentId,
+    runId,
+    // A stopped reviewer can differ from the task owner who receives the work back.
+    agentId: run?.agentId ?? null,
     cause: action.cause,
     nextAction: action.nextAction,
   };
