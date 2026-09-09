@@ -7599,3 +7599,159 @@ itself has identical per-file additions and deletions. No runner rebuild or
 live deployment was needed for these server-only changes. The new audit UI
 remains live-unqualified. Publish only one successor update to #13038; fresh
 exact-head CI and Greptile review, plus human CODEOWNER approval, remain gates.
+
+## September 9, 22:42 UTC — Settings saves only the selected destination
+
+The audit/copy candidate was published as `3614340933c2d2f53230a8163bbec21970cba01b`
+before the newly issued UI hold arrived. Its CI was still running at this
+checkpoint; the completed red result is recorded below. No new Greptile
+request was sent. Root then proved three distinct old-UI failures:
+two actual Settings pages with separate caches reverted an unrelated grant or
+revocation, and a 501-resource inventory made a single toggle exceed the
+500-entry request bound. All three failed at the intended state assertions on
+fresh `chat_ui_partial_20260909_red01`. Earlier launch failures at a busy
+default port and embedded database startup did not execute these cases.
+
+Root commit `72238a84ec772088aba809c7cdb9321ada3b70a8` changes only the existing
+Settings component and browser spec. Each click sends one typed resource
+update. Successful responses still refresh the full cache, errors remain
+visible, and pending controls stay disabled without claiming an unsaved value.
+It does not change same-destination last-write semantics or the partial-batch
+server API. The five existing provider management assertions now require the
+exact singleton payload.
+
+The fixed nine-case root browser cohort passes with no retries or skips:
+five provider catalog/setup/management journeys plus four new cases. A final
+four-case repeat adds the exact error-toast opacity assertion before the
+rejected-state screenshot; its earlier screenshot caught the transparent
+entrance frame despite DOM visibility. This strengthened repeat passes in
+22.2s. Root independently inspected pending, rejected and reloaded saved states.
+
+The landing composition is `fee3e9c6b05056a35a2704cf7b7bed1a520b2fa4`, 388 files.
+Both transferred paths were byte-identical to root before the patch and match
+the frozen final hashes afterward: UI `93b96459ffd593b2a8beec16b446349acb5693f0bb0bfd1983801d05b47a14cc`,
+spec `c4c8ac470487d5bfef29948a5044c5fcbff1330501eb36d49fee583dba9e5f52`.
+The composed four-case repeat passes in 49.2s, zero retries/skips, on isolated
+port 3278 with fresh `chat_close_receipt_20260909_ui_singleton01`. Its server
+shut down normally. All 64 selected UI units, plain UI types, token gates and
+diff checks pass. Server, runner and lock bytes remain unchanged; the earlier
+full 995-case server pass remains attributable to those exact bytes.
+
+The landing owner also inspected all three actual screenshots. The pending
+state retains both unchecked values; the rejected state has an accurate,
+fully opaque, unclipped error; one explicit retry saves only the selected
+destination and survives reload. The test uses real browser pages against a
+mock control-plane resource fixture. It is not live-provider permission or
+real database concurrency qualification, nor a claim about every transition
+or accessibility property. The API's atomicity has separate real database
+coverage above. No new images are tracked, and no live instance was changed.
+
+The next remote update must retain the complete 361 CI record and resolve any
+concrete failure, then obtain fresh exact-head CI and Greptile review. Human
+CODEOWNER approval remains required; no bypass or third chat PR is authorized.
+
+## September 9, 22:47 UTC — complete 361 CI retains a Rust failure
+
+Run `34412429534` completed red without cancellation. All independent jobs
+except Build passed, including every server/browser shard and required E2E.
+The verification aggregate correctly failed. Full chat integration passes
+**995/995**, no skips, in 576.43s tests / 591.09s total. The last general
+server shard passes 1,973 cases with five existing guards.
+
+Build passed 38 Node contracts and the runner TypeScript suite: **1,944**
+executed cases plus three unchanged opt-in benchmark guards, in 223.67s total.
+The Rust `codex_provider` target then finished with 83 passed, one failed and
+two helper declarations ignored. The failure is
+`ambiguous_replacement_turn_adopts_one_later_completion_identity`, at the
+assertion `observe replacement completion for malformed-error-with-completion`.
+This is not automatically a five-second timeout: the fixture also stops
+polling immediately when it sees an exit. Later runner checks and repository
+build stages did not execute after exit 101.
+
+The actual CI checkout is `840914a3c28879451d0314177c72a19474858f5c`, merging
+361 into master `3bc60dd8bf7bdef654553c7175e018f00b7a864c`. The failing test
+blob `c2246dc1281e5fab10c26dc8ab9f9316fe0a1665` is identical in incorporated
+master, published 361 and that current master; the chat branch has no Rust
+delta. This is source provenance only, not proof of flakiness, environment
+cause or irrelevance. A bounded provider-event/exit-order investigation owns
+the failure. The qualified singleton UI source remains frozen locally at
+fee3, with no new push, review request, deadline change or blind CI rerun.
+
+## September 9, 22:58 UTC — controlled Codex reader-tail repair
+
+The unchanged original release test passes alone in 0.09s. That does not clear
+the CI failure. A new per-instance, test-only receiver proxy holds the actual
+terminal frame after the owned child has exited. The old production code
+reports exit before that held frame reaches the parser: the new assertion
+genuinely fails in 0.02s. This establishes a concrete reader-ordering defect,
+without claiming a trace of the exact CI scheduler sequence.
+
+The bounded repair touches only existing `codex_provider.rs` and
+`process_supervisor.rs`. EOF and reader failure remain sticky across both
+receiver APIs; a read timeout is not EOF. Codex waits for its stdout tail
+before certifying exit, bounded by the existing shutdown grace for that
+process generation. A continuously writing descendant cannot keep the wait
+alive indefinitely. If the bound expires, the provider is not certified
+successful or safely reconciled; a terminal result already observed remains
+recorded. Quarantine still cannot interpret new frames. No global hook,
+provider fixture reordering, deadline increase or live binary replacement.
+
+The final six controls pass with zero ignored tests (269 unrelated tests
+filtered), in 6.04s. They cover the held actual terminal, sticky EOF with live
+stderr, reader error, generation/buffer boundaries, observed-terminal timeout
+semantics and an actual continuously writing descendant. Root and the
+independent reviewer approve the final hashes:
+
+- Codex: `0521d39e201163a7cd60cee14a38fe176d40a2b5a53d214618009a5851e4b394`.
+- Supervisor: `aeb00cd65932c50d553e8ac1e691f0bc5998843e1ca3e2a2ec5b7e6046910680`.
+
+Private commit `3bb4716f1ebde1c29f8c7b2b4099810c6587e7fb` adds only these two
+files to the qualified Settings composition. The comparison is 390 files,
+still below 500. Current master remains `3bc60dd8…`, with no newer runner
+overlap. The locked release Rust workspace is running at default concurrency;
+new artifact, transport, authority and type qualification must finish before
+publication. Original/live files, binary, dependency lock and server remain
+unchanged. Existing 995-case server and Settings receipts retain their exact
+source attribution; they do not qualify the new Rust artifact.
+
+The first default-concurrency release run is retained as **red**. The new six
+controls and original ambiguous-replacement case pass, but the unchanged
+descendant-restoration fixture fails its initial `assert!(completed)` at
+source line 5833. Its target reports 83 passed, one failed and two helper declarations
+ignored. The saved state contains 255 of 300 descendants, still active with
+no terminal: two 128-event poll batches including the initial root event.
+This matches the same pre-repair local failure boundary. An unchanged isolated
+run with the new release test binary passes in 3.51s; no source or deadline was
+changed. It is not proof of the exact local scheduling or storage bottleneck.
+An explicitly serial full Rust component run is the next qualification; the
+default failure will not be relabeled green. Fresh required Linux CI must
+exercise default concurrency. No unrelated fixture rewrite is justified by
+the observed partial-progress boundary.
+
+## September 9, 23:10 UTC — final isolated artifact qualification
+
+The explicit `--test-threads=1` locked release Rust workspace passes **546
+top-level tests plus two invoked subprocess-helper checks**, zero failures.
+The two helper declarations are ignored only in their parent harness and are
+executed separately. Both the original ambiguous-replacement case and the
+lineage case pass. The Codex integration target passes 84 cases in 98.72s.
+This is component qualification with explicit serial scheduling, not a claim
+that the default-concurrency run passed or a change to CI scheduling.
+
+Locked release/debug workspace binaries were rebuilt only in the isolated
+copy, then the runner was staged through the existing signing script. Its
+SHA-256 is `5ba0b273086e48ac1be07186083f75b6eb64a7157bf0663609f52c944f310443`.
+The full transport file passes **171/171**, zero skips, in 225.88s tests /
+226.43s total. The required actual runner-to-HTTP authority cohort passes
+**870/870** in 13.74s total. Conformance and replay parity pass **1/1** and
+**11/11**. Plain runner and server types pass. Final source, staged artifact
+and official tracked-lock hashes remain unchanged after the checks.
+
+The final remote overlap check found master `5488a79e…`, whose only addition
+since `3bc60dd8…` changes Docker publishing to native architecture runners.
+It does not overlap the Codex/supervisor repair, so no recency-only merge was
+performed. The code candidate remains `3bb4716f…`, 390 changed paths. The
+Settings browser and 995-case server receipts above retain exact unchanged
+source attribution. No live deployment or unrelated qualification was added.
+The next single update to #13038 still requires fresh exact-head CI,
+Greptile 5/5 and actual human CODEOWNER approval before normal merge.

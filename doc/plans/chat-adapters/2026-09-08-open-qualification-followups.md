@@ -24,7 +24,67 @@ stack ancestry. Neither the provisional count nor prior-head review is final
 verification. Root continues live qualification in the original worktree and
 does not push the remotely coordinated branch.
 
-## Current work — September 9, 22:27 UTC
+## Current work — September 9, 23:10 UTC
+
+The resource audit is published at `36143409…`, still **388 files**. Its CI
+run `34412429534` completed **red**: Build failed one Rust ambiguous-replacement
+case, so the required verification aggregate failed. All other independent
+jobs passed, including every browser and server shard. The isolated chat
+shard passes **995/995**, no skips, in 591.09s total. No review was requested
+for this intermediate head. The push had completed before a new UI hold
+arrived. Do not merge or blindly rerun this head.
+
+The Rust failure is `ambiguous_replacement_turn_adopts_one_later_completion_identity`:
+the malformed-error case did not observe its expected replacement completion.
+Its file is identical to incorporated and current master; this establishes
+source provenance, not a cause. A controlled actual-reader regression now
+proves premature exit before a held terminal frame is delivered. The unchanged
+original test also passes alone; that isolated pass does not erase CI's failure.
+The preceding runner TypeScript suite passes **1,944** cases with three existing
+benchmark guards, but later build stages did not run after the Rust failure.
+
+The hold exposed a separate real Settings bug: each toggle submitted the
+entire cached resource inventory. A stale page could revert another page's
+grant or revocation, and 501 discovered resources exceeded the 500-update
+request limit. Three actual browser regressions failed on those exact old
+behaviors. The narrow fix sends only the selected `{ id, enabled }` and keeps
+the full server response as the cache refresh. Same-destination last-write
+semantics, pending controls, and error handling remain unchanged.
+
+Root's fixed browser cohort passes **9/9**: five provider management journeys
+and four new regressions. The final stronger error-opacity check passes a
+separate **4/4** repeat. The composed candidate `fee3e9c6…` repeats those four
+cases on a fresh fixture database in **49.2s**, no retries or skips, and passes
+**64/64** UI units, plain UI types and token gates. The inspected screenshots
+show unchanged unchecked state while pending, a readable opaque error after
+rejection, and only the selected destination enabled after explicit retry and
+reload. These pages use a mock control plane; this is not live provider or
+database-transaction concurrency proof. A full transition or accessibility
+audit is not claimed.
+
+After the UI fix, private commit `3bb4716f…` changes two existing Rust files to
+remember reader EOF and drain the current process's tail before certifying exit.
+The existing shutdown grace bounds the wait, including a descendant that keeps
+writing. An undrained exit cannot certify success or safe reconciliation, but
+already-recorded terminal authority is not erased. All six focused controls
+pass; independent review is clear. The candidate is now **390 files**. The
+locked serial Rust workspace passes 546 top-level tests plus two invoked
+helpers. The new isolated artifact passes all **171/171** transport and
+**870/870** API-authority cases, conformance **1/1**, replay **11/11**, and plain
+runner/server types. Its staged SHA-256 begins `5ba0b273…`; the permanent log
+records the full hash. No live binary or tracked lock was changed.
+The default-concurrency Rust attempt retains one unchanged lineage-fixture
+failure: 255 of 300 events persisted before its first completion deadline,
+matching the earlier pre-repair local boundary. The same new-release case
+passes unchanged alone in 3.51s. The explicitly serial full-Rust run is green;
+fresh Linux CI remains the default-concurrency gate.
+The full **995/995** server and four-case Settings qualifications remain exact
+for their unchanged source bytes, not substitutes for those new runner gates.
+Publish one consolidated successor to existing #13038. It needs fresh
+exact-head CI, one Greptile review and human
+CODEOWNER approval. No third chat PR, live deployment or new image asset.
+
+### Prior checkpoint — September 9, 22:27 UTC
 
 The landing lane composed only the seven-file resource-audit and Discord-copy
 delta onto the qualified 2148 head. Application source is frozen at
