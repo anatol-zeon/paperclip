@@ -36,6 +36,7 @@ export type AcpxAgentProcessIdentity = { pid: number; startedAt: string };
 export type AcpxProcessIdentitySink = {
   current: AdapterExecutionContext["onSpawn"];
   latest: AcpxAgentProcessIdentity | null;
+  localProcessIdentity?: string | null;
 };
 
 /** The live-line buffer and log path a warm runtime's child stderr carries. */
