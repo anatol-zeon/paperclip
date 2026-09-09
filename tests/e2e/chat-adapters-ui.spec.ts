@@ -2,6 +2,7 @@ import {
   expect,
   test,
   type APIRequestContext,
+  type BrowserContext,
   type Page,
   type Route,
 } from "@playwright/test";
@@ -328,10 +329,13 @@ type ChatMock = {
 };
 
 async function installChatControlPlaneMock(
-  page: Page,
+  page: Page | BrowserContext,
   provider: ProviderCase,
   seed: Seed,
-  { enableChatConnectors }: { enableChatConnectors: boolean },
+  {
+    enableChatConnectors,
+    resourceCount = 2,
+  }: { enableChatConnectors: boolean; resourceCount?: number },
 ): Promise<ChatMock> {
   const endpoint = endpointFixture(provider, seed);
   const state: ChatMock & {
@@ -389,7 +393,16 @@ async function installChatControlPlaneMock(
     detail:
       provider.provider === "github" ? "Repository" : "Available at provider",
   };
-  const resources = [resource, secondaryResource];
+  const resources = [
+    resource,
+    secondaryResource,
+    ...Array.from({ length: Math.max(0, resourceCount - 2) }, (_, index) => ({
+      ...resource,
+      id: `resource-${provider.provider}-extra-${index}`,
+      providerResourceId: `provider-resource-${provider.provider}-extra-${index}`,
+      label: `Extra destination ${index + 1}`,
+    })),
+  ];
 
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -573,6 +586,11 @@ async function installChatControlPlaneMock(
           enabled: boolean;
         }>;
         state.resourceUpdates.push(updates);
+        // Match the real request-size boundary without contacting a provider.
+        if (updates.length > 500) {
+          await fulfill(route, { error: "Too many resource updates." }, 400);
+          return;
+        }
         for (const update of updates) {
           const target = resources.find((item) => item.id === update.id);
           if (target) target.enabled = update.enabled;
@@ -1162,6 +1180,197 @@ async function expectProviderTryInstructions(
   ).toHaveAttribute("href", provider.externalUrl);
 }
 
+test.describe("chat destination partial updates", () => {
+  let seed: Seed;
+
+  test.beforeAll(async ({ request }) => {
+    seed = await seedCompanyAndAgent(request);
+  });
+
+  for (const initiallyEnabled of [false, true]) {
+    test(`a stale Settings view preserves another view's ${initiallyEnabled ? "revocation" : "grant"}`, async ({
+      context,
+      page,
+    }) => {
+      const provider = PROVIDERS.find((item) => item.provider === "discord")!;
+      // Both real pages share one server fixture, but have separate query caches.
+      const mock = await installChatControlPlaneMock(context, provider, seed, {
+        enableChatConnectors: true,
+      });
+      mock.setStatus("active");
+      const settingsUrl = `/${seed.prefix}/apps/chat/endpoint-discord/settings`;
+      const primarySwitch = (view: Page) =>
+        view.getByRole("switch", { name: `Enable ${provider.resourceLabel}` });
+      const secondarySwitch = (view: Page) =>
+        view.getByRole("switch", {
+          name: `Enable ${provider.secondaryResourceLabel}`,
+        });
+
+      await page.goto(settingsUrl);
+      await expect(primarySwitch(page)).not.toBeChecked();
+      if (initiallyEnabled) {
+        await primarySwitch(page).click();
+        await expect(primarySwitch(page)).toBeChecked();
+      }
+      const staleView = await context.newPage();
+      await staleView.goto(settingsUrl);
+      await expect(primarySwitch(staleView)).toBeChecked({
+        checked: initiallyEnabled,
+      });
+      await expect(secondarySwitch(staleView)).not.toBeChecked();
+
+      await primarySwitch(page).click();
+      await expect(primarySwitch(page)).toBeChecked({
+        checked: !initiallyEnabled,
+      });
+      // Assert the stale prerequisite instead of assuming browser focus/refetch.
+      await expect(primarySwitch(staleView)).toBeChecked({
+        checked: initiallyEnabled,
+      });
+      await secondarySwitch(staleView).click();
+      await expect(secondarySwitch(staleView)).toBeChecked();
+      await expect(primarySwitch(staleView)).toBeChecked({
+        checked: !initiallyEnabled,
+      });
+      expect(mock.resourceUpdates.at(-1)).toEqual([
+        { id: "resource-discord-secondary", enabled: true },
+      ]);
+
+      // The full response refreshes this page, and persisted state survives reload.
+      await page.reload();
+      await expect(primarySwitch(page)).toBeChecked({
+        checked: !initiallyEnabled,
+      });
+      await expect(secondarySwitch(page)).toBeChecked();
+      await staleView.close();
+    });
+  }
+
+  test("a pending destination change stays truthful on rejection and explicit retry", async ({
+    page,
+  }, testInfo) => {
+    const provider = PROVIDERS.find((item) => item.provider === "discord")!;
+    const mock = await installChatControlPlaneMock(page, provider, seed, {
+      enableChatConnectors: true,
+    });
+    mock.setStatus("active");
+    const attempts: unknown[] = [];
+    let holdFirstPut!: (route: Route) => void;
+    const firstPut = new Promise<Route>((resolve) => {
+      holdFirstPut = resolve;
+    });
+    await page.route(
+      "**/api/chat-endpoints/endpoint-discord/resources",
+      async (route) => {
+        if (route.request().method() === "PUT") {
+          attempts.push(bodyOf(route));
+          if (attempts.length === 1) {
+            holdFirstPut(route);
+            return;
+          }
+        }
+        await route.fallback();
+      },
+    );
+    await page.goto(`/${seed.prefix}/apps/chat/endpoint-discord/settings`);
+    const primary = page.getByRole("switch", { name: "Enable #general" });
+    const secondary = page.getByRole("switch", { name: "Enable #support" });
+    await expect(primary).not.toBeChecked();
+    await primary.click();
+    const held = await firstPut;
+    try {
+      await expect(primary).toBeDisabled();
+      await expect(secondary).toBeDisabled();
+      await expect(primary).not.toBeChecked();
+      await expect(secondary).not.toBeChecked();
+      expect(mock.resourceUpdates).toEqual([]);
+      await page.screenshot({
+        path: testInfo.outputPath("destination-pending.png"),
+      });
+    } finally {
+      await fulfill(
+        held,
+        { error: "Destination is no longer available. Refresh and try again." },
+        409,
+      );
+    }
+    await expect(
+      page.getByText("Couldn't update destination", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        "Destination is no longer available. Refresh and try again.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(primary).toBeEnabled();
+    await expect(secondary).toBeEnabled();
+    await expect(primary).not.toBeChecked();
+    await expect(secondary).not.toBeChecked();
+    expect(mock.resourceUpdates).toEqual([]);
+    expect(attempts).toEqual([
+      { resources: [{ id: "resource-discord", enabled: true }] },
+    ]);
+    // Visibility alone also matches the toast's initial transparent animation frame.
+    await expect(
+      page
+        .getByRole("listitem")
+        .filter({ hasText: "Couldn't update destination" }),
+    ).toHaveCSS("opacity", "1");
+    await page.screenshot({
+      path: testInfo.outputPath("destination-rejected.png"),
+    });
+    await primary.click();
+    await expect(primary).toBeChecked();
+    await expect(secondary).not.toBeChecked();
+    expect(attempts).toEqual([
+      { resources: [{ id: "resource-discord", enabled: true }] },
+      { resources: [{ id: "resource-discord", enabled: true }] },
+    ]);
+    expect(mock.resourceUpdates).toEqual([
+      [{ id: "resource-discord", enabled: true }],
+    ]);
+    await page.reload();
+    await expect(primary).toBeChecked();
+    await expect(secondary).not.toBeChecked();
+    await page.screenshot({
+      path: testInfo.outputPath("destination-retry-saved.png"),
+    });
+  });
+
+  test("one toggle succeeds with more than 500 discovered destinations", async ({
+    page,
+  }) => {
+    const provider = PROVIDERS.find((item) => item.provider === "discord")!;
+    const mock = await installChatControlPlaneMock(page, provider, seed, {
+      enableChatConnectors: true,
+      resourceCount: 501,
+    });
+    mock.setStatus("active");
+    await page.goto(`/${seed.prefix}/apps/chat/endpoint-discord/settings`);
+    await expect(page.getByRole("switch", { name: /^Enable / })).toHaveCount(
+      501,
+    );
+    const target = page.getByRole("switch", {
+      name: "Enable Extra destination 499",
+    });
+    await expect(target).not.toBeChecked();
+    await target.click();
+    await expect(target).toBeChecked();
+    expect(mock.resourceUpdates).toEqual([
+      [{ id: "resource-discord-extra-498", enabled: true }],
+    ]);
+    await expect(
+      page.getByRole("switch", { name: "Enable #general" }),
+    ).not.toBeChecked();
+    await page.reload();
+    await expect(target).toBeChecked();
+    await expect(page.getByRole("switch", { name: /^Enable / })).toHaveCount(
+      501,
+    );
+  });
+});
+
 test.describe.serial("native chat adapter UI", () => {
   test.setTimeout(180_000);
 
@@ -1518,10 +1727,6 @@ test.describe.serial("native chat adapter UI", () => {
       await expect.poll(() => mock.updatedResource).toBe(true);
       expect(mock.resourceUpdates.at(-1)).toEqual([
         { id: `resource-${provider.provider}`, enabled: true },
-        {
-          id: `resource-${provider.provider}-secondary`,
-          enabled: false,
-        },
       ]);
 
       if (provider.provider === "github") {

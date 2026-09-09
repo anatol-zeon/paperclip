@@ -335,11 +335,8 @@ function Settings({
     queryFn: () => chatEndpointsApi.listResources(endpointId),
   });
   const saveResources = useMutation({
-    mutationFn: (resources: ChatEndpointResource[]) =>
-      chatEndpointsApi.updateResources(
-        endpointId,
-        resources.map(({ id, enabled }) => ({ id, enabled })),
-      ),
+    mutationFn: (resource: Pick<ChatEndpointResource, "id" | "enabled">) =>
+      chatEndpointsApi.updateResources(endpointId, [resource]),
     onSuccess: (resources) =>
       queryClient.setQueryData(
         queryKeys.chatEndpoints.resources(endpointId),
@@ -371,11 +368,8 @@ function Settings({
     isIndividuallyToggleableResource(endpoint.provider, resource.type),
   );
   const toggleResource = (resource: ChatEndpointResource, enabled: boolean) =>
-    saveResources.mutate(
-      resources.map((item) =>
-        item.id === resource.id ? { ...item, enabled } : item,
-      ),
-    );
+    // A cached inventory must not overwrite another operator's unrelated edits.
+    saveResources.mutate({ id: resource.id, enabled });
   return (
     <section className="max-w-3xl space-y-7">
       {endpoint.provider === "slack" && endpoint.setup?.command && (
