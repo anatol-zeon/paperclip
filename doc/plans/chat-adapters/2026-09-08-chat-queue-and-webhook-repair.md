@@ -7560,3 +7560,42 @@ Neither fix has been deployed to Live83 or included in reviewed 2148 yet. The
 landing lane must apply only this follow-up delta, preserving its newer service
 and integration fixes, then qualify the full composition. Any successor needs
 fresh CI and exact-head review; human CODEOWNER approval remains required.
+
+## September 9, 22:27 UTC — composed resource audit qualification
+
+The landing lane applied only root commit `2af25c89514be5591205180eeac63b9575c9ea0e`
+relative to its `a185ba071` parent onto reviewed head `2148ea2f`. The seven-file
+patch merged cleanly without replacing root snapshots over newer landing
+fixes. Application candidate `3afad5f3e42810bc433b5337c2063c3bc88d7001` changes
+388 files versus the incorporated master. The additional two diff paths are
+existing foundation runtime/native-command test files, not new files. Only
+three production provider SVGs remain in the image diff; no wireframe images
+returned. The official lock and private runner artifact remain unchanged.
+
+Fresh full chat integration passes **995/995**, no skips or retries, in
+280.58s tests / 289.48s total, exit 0 at 22:26:44 UTC. It used retained database
+`chat_close_receipt_20260909_full_resource_audit01`. The existing 250ms observer
+read only that test database and recorded four ordinary lock waits, no
+`40P01`, and no observer errors. No database settings or deadlines changed.
+The initial two migration-launch attempts could not resolve a root-level
+`tsx`; neither started a database or test. The physical DB package's installed
+`tsx` then created and migrated the fresh database successfully.
+
+Additional exact composed checks pass: four native-command/runtime files
+**100/100** in 5.20s; adapter bridge and default-off route checks **82/82** in
+1.39s; three CI partition/config files **28/28** in 1.75s. Plain server types
+and diff checks pass. These counts describe separate selected cohorts, not
+additional unique coverage beyond the full repository.
+
+Composed source SHA-256 values stayed unchanged before and after the full run:
+
+- Service: `08ca2017a996a513f436642bd22039696a2bd23f02f9567db9bbe56e86370308`.
+- Integration: `70707a17b1de36bd4bdde6191c54cf1844ca6d474d6c261f87c7b10c3391c9bc`.
+- Route: `2c5663f1b83d3c39cbeb4377a3870342dd01442581174585899b072dddd0d596`.
+
+The service and integration hashes differ from root's qualified hashes because
+the composed files retain the newer landing-only fixes. The follow-up diff
+itself has identical per-file additions and deletions. No runner rebuild or
+live deployment was needed for these server-only changes. The new audit UI
+remains live-unqualified. Publish only one successor update to #13038; fresh
+exact-head CI and Greptile review, plus human CODEOWNER approval, remain gates.

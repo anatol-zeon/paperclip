@@ -24,7 +24,30 @@ stack ancestry. Neither the provisional count nor prior-head review is final
 verification. Root continues live qualification in the original worktree and
 does not push the remotely coordinated branch.
 
-## Current work — September 9, 22:16 UTC
+## Current work — September 9, 22:27 UTC
+
+The landing lane composed only the seven-file resource-audit and Discord-copy
+delta onto the qualified 2148 head. Application source is frozen at
+`3afad5f3e42810bc433b5337c2063c3bc88d7001`. The successor changes **388 files**:
+two existing foundation files now have a real copy/test change. The newer
+landing fixes, official lock, runner artifact and UI remain unchanged. The
+root feature checkout and Live83 were not changed by this composition.
+
+Fresh full integration passes **995/995**, with no skips or retries, in
+289.48s total / 280.58s tests. The retained database is
+`chat_close_receipt_20260909_full_resource_audit01`. Its read-only observer
+recorded four ordinary lock waits and no `40P01` or observer errors. Source
+hashes stayed unchanged. The composed native-command/runtime cohort passes
+**100/100**; adapter and default-off route checks pass **82/82**; CI partition
+checks pass **28/28**. Plain server typecheck and diff checks pass.
+
+This is local successor qualification, not a fresh CI or review result.
+Publish one update to existing #13038 to retain the two-chat-PR split. The
+successor still needs exact-head required CI, Greptile 5/5 and actual human
+CODEOWNER approval. The historical 2148 gates below cannot approve new bytes.
+Neither follow-up is deployed to Live83; the new audit UI remains live-unqualified.
+
+### Prior checkpoint — September 9, 22:16 UTC
 
 Published integration PR #13038 at `2148ea2f…` has **386 files**. Fresh CI
 `34407804049` completed successfully at 21:53 UTC: all **24 jobs** passed,
