@@ -33,7 +33,10 @@ export function cloudControlMiddleware(): RequestHandler {
       return;
     }
     const expectedAction = ACTION_BY_METHOD[req.method];
-    if (req.path !== "/api/instance/task-drain" || !expectedAction) {
+    // Express's non-strict routing treats a trailing slash as the same
+    // route; the endpoint check must agree with it.
+    const normalizedPath = req.path.length > 1 && req.path.endsWith("/") ? req.path.slice(0, -1) : req.path;
+    if (normalizedPath !== "/api/instance/task-drain" || !expectedAction) {
       res.status(400).json({ error: "cloud_control_wrong_endpoint" });
       return;
     }

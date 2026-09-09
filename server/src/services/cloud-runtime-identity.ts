@@ -455,6 +455,32 @@ export type CloudControlAction = (typeof CLOUD_CONTROL_ACTIONS)[number];
 /** Control calls are immediate; a stolen assertion should age out fast. */
 const CLOUD_CONTROL_MAX_LIFETIME_SECONDS = 5 * 60;
 
+/**
+ * Single-use fence: a verified assertion's requestId is consumed atomically
+ * (module state; JS execution is single-threaded per process) and a replay
+ * of the same id is rejected for as long as the original could still be
+ * alive. Process-local on purpose — the drain state this protects is
+ * itself process-local, so a restart clears both together. Entries prune
+ * lazily at their expiry.
+ */
+const consumedControlRequestIds = new Map<string, number>();
+
+function consumeControlRequestId(requestId: string, expSeconds: number, nowMs: number): boolean {
+  for (const [id, expiresAtMs] of consumedControlRequestIds) {
+    if (expiresAtMs <= nowMs) consumedControlRequestIds.delete(id);
+  }
+  if (consumedControlRequestIds.has(requestId)) {
+    return false;
+  }
+  consumedControlRequestIds.set(requestId, expSeconds * 1000);
+  return true;
+}
+
+/** Test seam: modules sharing a process must be able to reset the fence. */
+export function resetCloudControlReplayFenceForTests() {
+  consumedControlRequestIds.clear();
+}
+
 export type CloudControlClaims = {
   v: 1;
   iss: typeof CLOUD_RUNTIME_IDENTITY_ISSUER;
@@ -542,6 +568,12 @@ export function verifyCloudControlAssertion(input: {
     || payload.exp - payload.iat > CLOUD_CONTROL_MAX_LIFETIME_SECONDS
   ) {
     throw new Error("Cloud control assertion is expired or has an invalid lifetime");
+  }
+  // Consumed LAST, only after every other check passed: a rejected
+  // assertion must not burn its request id, or an attacker could deny a
+  // legitimate call by replaying a mangled copy of it first.
+  if (!consumeControlRequestId(payload.requestId, payload.exp + MAX_CLOCK_SKEW_SECONDS, now.getTime())) {
+    throw new Error("Cloud control assertion has already been used");
   }
   return payload as CloudControlClaims;
 }

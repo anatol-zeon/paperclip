@@ -9,6 +9,7 @@ import {
   CLOUD_RUNTIME_IDENTITY_AUDIENCE,
   CLOUD_RUNTIME_IDENTITY_ISSUER,
   CLOUD_RUNTIME_IDENTITY_JWS_TYPE,
+  resetCloudControlReplayFenceForTests,
   verifyCloudControlAssertion,
   type CloudControlAction,
 } from "../services/cloud-runtime-identity.js";
@@ -36,6 +37,8 @@ function encodeJson(value: Record<string, unknown>) {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
 }
 
+let requestIdCounter = 0;
+
 function controlAssertion(input: {
   claims?: Record<string, unknown>;
   header?: Record<string, unknown>;
@@ -55,7 +58,8 @@ function controlAssertion(input: {
     aud: CLOUD_CONTROL_AUDIENCE,
     sub: STACK_ID,
     action: input.action ?? "task-drain:start",
-    requestId: "drain-req-1",
+    // Unique per assertion: request ids are single-use by design.
+    requestId: `drain-req-${(requestIdCounter += 1)}`,
     iat,
     exp: iat + 60,
     ...input.claims,
@@ -69,6 +73,10 @@ function controlAssertion(input: {
 }
 
 describe("verifyCloudControlAssertion", () => {
+  beforeEach(() => {
+    resetCloudControlReplayFenceForTests();
+  });
+
   const verify = (jws: string, expectedAction: CloudControlAction = "task-drain:start") =>
     verifyCloudControlAssertion({ compactJws: jws, expectedAction, env: ENV, now: NOW });
 
@@ -76,7 +84,23 @@ describe("verifyCloudControlAssertion", () => {
     const claims = verify(controlAssertion());
     expect(claims.sub).toBe(STACK_ID);
     expect(claims.action).toBe("task-drain:start");
-    expect(claims.requestId).toBe("drain-req-1");
+    expect(claims.requestId).toMatch(/^drain-req-\d+$/);
+  });
+
+  it("rejects a replay: each assertion's request id is single-use", () => {
+    const jws = controlAssertion();
+    verify(jws);
+    expect(() => verify(jws)).toThrow(/already been used/);
+    // A distinct assertion (fresh request id) still verifies.
+    verify(controlAssertion());
+  });
+
+  it("a rejected assertion does not burn its request id", () => {
+    // The consume runs last: replaying a mangled copy first must not
+    // deny the legitimate call.
+    const jws = controlAssertion();
+    expect(() => verify(jws, "task-drain:stop")).toThrow(/does not authorize/);
+    verify(jws);
   });
 
   it("rejects an assertion for a different action — read cannot start a drain", () => {
@@ -163,6 +187,7 @@ describe("cloudControlMiddleware", () => {
   const savedEnv: Record<string, string | undefined> = {};
 
   beforeEach(() => {
+    resetCloudControlReplayFenceForTests();
     savedEnv.PAPERCLIP_CLOUD_RUNTIME_IDENTITY_JWKS = process.env.PAPERCLIP_CLOUD_RUNTIME_IDENTITY_JWKS;
     savedEnv.PAPERCLIP_CLOUD_STACK_ID = process.env.PAPERCLIP_CLOUD_STACK_ID;
     process.env.PAPERCLIP_CLOUD_RUNTIME_IDENTITY_JWKS = ENV.PAPERCLIP_CLOUD_RUNTIME_IDENTITY_JWKS;
@@ -202,7 +227,7 @@ describe("cloudControlMiddleware", () => {
       aud: CLOUD_CONTROL_AUDIENCE,
       sub: STACK_ID,
       action,
-      requestId: "drain-req-live",
+      requestId: `drain-req-live-${(requestIdCounter += 1)}`,
       iat,
       exp: iat + 60,
     });
@@ -236,6 +261,24 @@ describe("cloudControlMiddleware", () => {
       .set(CLOUD_CONTROL_HEADER, freshAssertion("task-drain:read"));
     expect(res.status).toBe(401);
     expect(res.body.error).toBe("invalid_cloud_control_assertion");
+  });
+
+  it("accepts the conventional trailing-slash form of the endpoint", async () => {
+    const app = createApp();
+    const res = await request(app)
+      .get("/api/instance/task-drain/")
+      .set(CLOUD_CONTROL_HEADER, freshAssertion("task-drain:read"));
+    expect(res.status).toBe(200);
+    expect(res.body.actor).toMatchObject({ source: "cloud_control" });
+  });
+
+  it("rejects a replayed assertion at the middleware", async () => {
+    const app = createApp();
+    const jws = freshAssertion("task-drain:read");
+    const first = await request(app).get("/api/instance/task-drain").set(CLOUD_CONTROL_HEADER, jws);
+    expect(first.status).toBe(200);
+    const replay = await request(app).get("/api/instance/task-drain").set(CLOUD_CONTROL_HEADER, jws);
+    expect(replay.status).toBe(401);
   });
 
   it("rejects the header anywhere but the task-drain endpoint", async () => {
