@@ -1893,6 +1893,12 @@ async function buildRuntime(input: {
   // `env` above and are never present in shapedEnvConfig, so they inherently
   // stay out of the hash and don't reset the session every heartbeat.
   const resolvedAdapterEnv: Record<string, string> = {};
+  const scratch = parseObject(context.paperclipScratch);
+  const scratchKeys = scratch.type === "heartbeat_run" && typeof scratch.dir === "string"
+    ? new Set(["PAPERCLIP_RUN_SCRATCH_DIR", "PAPERCLIP_TASK_SCRATCH_DIR", "PAPERCLIP_SCRATCH_DIR", "PAPERCLIP_TMPDIR",
+      ...(Array.isArray(scratch.tempKeysApplied) ? scratch.tempKeysApplied.filter((key): key is string =>
+        typeof key === "string" && ["TMPDIR", "TEMP", "TMP"].includes(key)) : [])])
+    : new Set<string>();
   for (const [key, value] of Object.entries(shapedEnvConfig)) {
     if (typeof value !== "string") continue;
     // Runtime PAPERCLIP_* always wins over config: skip a PAPERCLIP_* key that
@@ -1903,7 +1909,10 @@ async function buildRuntime(input: {
     if (isForbiddenConfigEnvKey(key)) continue;
     if (isPaperclipRuntimeEnvKey(key) && key in env) continue;
     env[key] = value;
-    resolvedAdapterEnv[key] = value;
+    // The server rotates run-owned scratch paths on every wake. Still forward
+    // them, but only hash actual adapter settings. User-supplied temp overrides
+    // are absent from tempKeysApplied and keep their compatibility protection.
+    if (!scratchKeys.has(key) || value !== scratch.dir) resolvedAdapterEnv[key] = value;
   }
   if (authToken) env.PAPERCLIP_API_KEY = authToken;
   // For the claude agent, set model via ANTHROPIC_MODEL at startup rather than
@@ -3778,7 +3787,21 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
     // null on the host lane (no staging) and on a build failure (where
     // `buildRuntime` already released its own partial lease).
     let releaseStagingLease: (() => void) | null = null;
+    let stopTimer: ReturnType<typeof setTimeout> | undefined;
+    let removeStopListener: (() => void) | undefined;
+    let forcedStop = false;
+    let runtimeStopConfirmed = false;
+    let safeInterruptedSession = false;
+    const interruptionTools = new Map<string, { kind?: string; status?: string }>();
+    let incompleteToolInventory = false;
     try {
+      await ctx.onCancellationReady?.();
+      if (ctx.signal?.aborted) return {
+        exitCode: null, signal: null, timedOut: false,
+        errorCode: "cancelled", errorMessage: "Stopped before provider startup",
+        executionRecovery: { kind: "bootstrap", providerWorkStarted: false },
+        resultJson: { executionCancellation: { state: "acknowledged", acknowledgedAt: new Date().toISOString(), forced: false } },
+      };
       // Evict idle staged runtimes BEFORE building the runtime, since buildRuntime
       // consults the staged cache to decide whether a compatible resume may reuse
       // an already-staged runtime — an expired entry must not be reused.
@@ -4003,6 +4026,9 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
 
         const previousParams = parseObject(ctx.runtime.sessionParams);
         const canResume = isCompatibleSession(previousParams, prepared);
+        if (previousParams.interruptedCheckpoint === true && !canResume) {
+          throw new Error("The interrupted session is no longer compatible. Its action history must be checked before starting a new session.");
+        }
         const resumeSessionId = canResume ? asString(previousParams.acpSessionId, "") || undefined : undefined;
         // Borrow the warm entry without removing it, so an overlapping run of the
         // same session still sees it. The borrow clears the entry's idle timer, so
@@ -4181,7 +4207,7 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
                 }),
               });
             } catch (err) {
-              if (!resumeSessionId || !isResumeFailure(err)) throw err;
+              if (!resumeSessionId || !isResumeFailure(err) || previousParams.interruptedCheckpoint === true) throw err;
               clearSession = true;
               resumedSession = false;
               await ctx.onLog(
@@ -4229,6 +4255,9 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
             });
           }
           // A compatible warm handle reuses the already-running ACP agent and does
+          if (previousParams.interruptedCheckpoint === true && handle?.backendSessionId !== resumeSessionId) {
+            throw new Error("The provider did not restore the interrupted session; refusing a fresh-session fallback.");
+          }
           // not emit another spawn event. Persist its known identity on this run
           // before the next prompt starts so every running heartbeat is adoptable.
           if (handle && cached && processIdentitySink.latest && ctx.onSpawn) {
@@ -4534,6 +4563,7 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
         turnPhaseStart = now();
       };
       const stepTurnStart = (signal: AbortSignal, startTimeoutMs: number | undefined): StartedTurn => {
+        ctx.signal?.throwIfAborted();
         const turn = runtime.startTurn({
           handle: sessionHandle,
           text: runPrompt,
@@ -4543,6 +4573,19 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
           signal,
         });
         activeTurn = turn;
+        // ACP resolves the terminal result before draining/closing its process.
+        // Provider cleanup may take longer than the cancellation grace period.
+        void turn.result.then(() => clearTimeout(stopTimer), () => clearTimeout(stopTimer));
+        const armStopDeadline = () => {
+          stopTimer = setTimeout(() => {
+            forcedStop = true;
+            void runtime.close({ handle: sessionHandle, reason: "operator stop deadline", discardPersistentState: true })
+              .catch(() => {});
+          }, Math.max(1, asNumber(ctx.config.graceSec, 15)) * 1000);
+        };
+        ctx.signal?.addEventListener("abort", armStopDeadline, { once: true });
+        removeStopListener = () => ctx.signal?.removeEventListener("abort", armStopDeadline);
+        if (ctx.signal?.aborted) armStopDeadline();
         return {
           cancel: async (reason: string) => {
             await turn.cancel({ reason });
@@ -4553,6 +4596,19 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
         const turn = activeTurn as AcpRuntimeTurn;
         const toolTitles = new Map<string, string>();
         for await (const event of turn.events) {
+          // ACPX currently flattens client-side filesystem/terminal receipts
+          // into status text. They cannot establish complete action outcomes.
+          if (event.type === "status" && /^(fs|terminal)\//.test(event.text)) incompleteToolInventory = true;
+          if (event.type === "tool_call") {
+            if (!event.toolCallId) incompleteToolInventory = true;
+            else {
+              const previous = interruptionTools.get(event.toolCallId);
+              interruptionTools.set(event.toolCallId, {
+                kind: event.kind ?? previous?.kind,
+                status: event.status ?? previous?.status,
+              });
+            }
+          }
           if (event.type === "text_delta" && event.stream !== "thought") {
             currentOutputChunk.push(event.text);
           } else if (event.type === "tool_call" && event.tag !== "tool_call_update") {
@@ -4575,6 +4631,7 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
         input: TurnFinalizeInput<AcpRuntimeTurnResult>,
       ): Promise<TurnCompletion> => {
         if (input.kind === "terminal") {
+        clearTimeout(stopTimer);
         const terminal = input.terminal;
         const timedOut = input.timedOut;
         // Read the sandbox duplex control-channel disposition at the ACP
@@ -4627,6 +4684,15 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
           eventCostUsd,
         });
         const failedTurn = terminal.status === "failed" || terminal.status === "cancelled" || timedOut;
+        // A provider-native command/write has no reliable external outcome
+        // receipt. Only settled reads (or a turn with no tools) can establish
+        // automatic interrupted-session continuity here.
+        safeInterruptedSession = ctx.signal?.aborted === true && !forcedStop && !timedOut && !channelLost
+          && (terminal.status === "cancelled" || terminal.status === "completed")
+          && prepared.mode === "persistent" && !prepared.processSessionBridge
+          && Boolean(sessionHandle.backendSessionId)
+          && !incompleteToolInventory
+          && [...interruptionTools.values()].every((tool) => tool.kind === "read" && tool.status === "completed");
         // Record how the settlement `endSession` step closes the runtime for this
         // outcome. A clean persistent host turn is save-eligible, but the
         // Amendment B credential gate fails on the host lane (the run API key is
@@ -4646,7 +4712,7 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
               : failedTurn
                 ? `paperclip turn ${terminal.status}`
                 : "paperclip completed turn cleanup",
-          discardPersistentState: terminal.status === "cancelled" || timedOut || channelLost,
+          discardPersistentState: (terminal.status === "cancelled" && !safeInterruptedSession) || timedOut || channelLost,
           dropWarmEntry: false,
           recordCloseError: false,
           cancelTurnReason: null,
@@ -4826,6 +4892,7 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
       };
       try {
         return await runTurnSequence<AcpRuntimeTurnResult>({
+          signal: ctx.signal,
           timeoutMs: prepared.timeoutSec > 0 ? prepared.timeoutSec * 1000 : undefined,
           timeoutMessage: formatAdapterExecutionTimeoutErrorMessage(prepared.timeoutResolution),
           promptBuild: stepPromptBuild,
@@ -4960,7 +5027,7 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
             });
             return;
           }
-          const onCloseError = settlement.recordCloseError
+          const onCloseError = settlement.recordCloseError || ctx.signal?.aborted
             ? (closeErr: unknown) => recordTeardownError("runtime-close", closeErr)
             : () => {};
           await runtime
@@ -4969,6 +5036,7 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
               reason: settlement.reason,
               discardPersistentState: settlement.discardPersistentState,
             })
+            .then(() => { runtimeStopConfirmed = true; })
             .catch(onCloseError);
           if (settlement.dropWarmEntry && warmHandleMatches(existing, runtime, settlement.handle) && existing) {
             clearWarmHandleTimer(existing);
@@ -5045,6 +5113,25 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
           if (!capturedResult) {
             throw new Error("run coordinator reproduced a result before the run recorded one");
           }
+          clearTimeout(stopTimer);
+          let providerExited = false;
+          const providerPid = processIdentitySink?.latest?.pid;
+          if (ctx.signal?.aborted && providerPid && !prepared.processSessionBridge) {
+            try { process.kill(providerPid, 0); }
+            catch (error) { providerExited = (error as NodeJS.ErrnoException).code === "ESRCH"; }
+          }
+          if (ctx.signal?.aborted && runtimeStopConfirmed && providerExited) {
+            capturedResult = {
+              ...capturedResult,
+              ...(safeInterruptedSession && !forcedStop && !("workspaceRestoreFailure" in workspaceRestoreFailureField)
+                ? { executionRecovery: { kind: "interrupted", providerStopped: true, sessionPreserved: true, actionOutcomes: "settled" },
+                    sessionParams: { ...capturedResult.sessionParams, interruptedCheckpoint: true } }
+                : {}),
+              resultJson: { ...capturedResult.resultJson, executionCancellation: {
+                state: "acknowledged", acknowledgedAt: new Date().toISOString(), forced: forcedStop,
+              } },
+            };
+          }
           // The sync-back settlement step runs before this reproduces the result
           // (settlement precedes reproduction), so a failed workspace restore is
           // already recorded by the time we get here. Merge it into `resultJson`
@@ -5063,6 +5150,8 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
       };
       return await runAttempt(plan);
     } finally {
+      clearTimeout(stopTimer);
+      removeStopListener?.();
       // End the run root span exactly once, on every return and on a throw.
       runRootSpan.end(runFailed);
       // Release the per-session staging lease as the run's final act, AFTER the
