@@ -205,7 +205,11 @@ import type {
   ChatSdkStatePersistence,
   ChatSdkStateScope,
 } from "./chat-sdk-state.js";
-import { logActivity } from "./activity-log.js";
+import {
+  logActivity,
+  publishActivity,
+  type ActivityPublication,
+} from "./activity-log.js";
 import {
   queueIssueAssignmentWakeup,
   type IssueAssignmentWakeupDeps,
@@ -26306,6 +26310,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   async function replaceResources(
     endpointId: string,
     updates: Array<{ id: string; enabled: boolean }>,
+    actorUserId?: string | null,
   ) {
     const initial = await endpointRecord(endpointId);
     if (!initial) throw notFound("Chat endpoint not found");
@@ -26313,53 +26318,97 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     await withCredentialMutationLease(
       initial.endpoint,
       async (credentialLease) => {
-        const record = await endpointRecord(endpointId);
-        if (!record) throw notFound("Chat endpoint not found");
         const ids = updates.map((entry) => entry.id);
-        const rows = await db
-          .select({
-            id: chatEndpointResources.id,
-            availability: chatEndpointResources.availability,
-          })
-          .from(chatEndpointResources)
-          .where(
-            and(
-              eq(chatEndpointResources.endpointId, endpointId),
-              inArray(chatEndpointResources.id, ids),
-            ),
-          );
-        if (rows.length !== new Set(ids).size)
-          throw unprocessable("Every resource must belong to this endpoint");
-        const availabilityById = new Map(
-          rows.map((row) => [row.id, row.availability]),
-        );
-        const unavailable = updates.find(
-          (entry) =>
-            entry.enabled && availabilityById.get(entry.id) !== "available",
-        );
-        if (unavailable) {
-          throw conflict(
-            "A destination must still be available from the provider before it can be enabled",
-            {
-              code: "chat_resource_unavailable",
-              resourceId: unavailable.id,
-            },
-          );
-        }
+        const publications: ActivityPublication[] = [];
         await db.transaction(async (tx) => {
           await credentialLease.assertOwned(tx);
+          const [endpoint] = await tx
+            .select({
+              companyId: chatEndpoints.companyId,
+              connectionId: chatEndpoints.connectionId,
+              provider: chatEndpoints.provider,
+            })
+            .from(chatEndpoints)
+            .where(
+              and(
+                eq(chatEndpoints.id, endpointId),
+                eq(chatEndpoints.companyId, initial.endpoint.companyId),
+              ),
+            )
+            .for("no key update");
+          if (!endpoint) throw notFound("Chat endpoint not found");
+          const rows = await tx
+            .select({
+              id: chatEndpointResources.id,
+              availability: chatEndpointResources.availability,
+              enabled: chatEndpointResources.enabled,
+            })
+            .from(chatEndpointResources)
+            .where(
+              and(
+                eq(chatEndpointResources.companyId, endpoint.companyId),
+                eq(chatEndpointResources.endpointId, endpointId),
+                inArray(chatEndpointResources.id, ids),
+              ),
+            )
+            .orderBy(asc(chatEndpointResources.id))
+            .for("no key update");
+          if (rows.length !== new Set(ids).size)
+            throw unprocessable("Every resource must belong to this endpoint");
+          const availabilityById = new Map(
+            rows.map((row) => [row.id, row.availability]),
+          );
+          // Validate every submitted grant, including intermediate duplicate
+          // entries. Netting below describes the audit, not new authority.
+          const unavailable = updates.find(
+            (entry) =>
+              entry.enabled && availabilityById.get(entry.id) !== "available",
+          );
+          if (unavailable)
+            throw conflict(
+              "A destination must still be available from the provider before it can be enabled",
+              { code: "chat_resource_unavailable", resourceId: unavailable.id },
+            );
+          const finalEnabled = new Map(
+            updates.map((entry) => [entry.id, entry.enabled]),
+          );
+          const changes = rows
+            .filter((row) => row.enabled !== finalEnabled.get(row.id))
+            .map((row) => ({
+              resourceId: row.id,
+              before: { enabled: row.enabled },
+              after: { enabled: finalEnabled.get(row.id)! },
+            }));
           for (const entry of updates)
             await tx
               .update(chatEndpointResources)
               .set({ enabled: entry.enabled, updatedAt: new Date() })
               .where(
                 and(
+                  eq(chatEndpointResources.companyId, endpoint.companyId),
                   eq(chatEndpointResources.endpointId, endpointId),
                   eq(chatEndpointResources.id, entry.id),
                 ),
               );
+          if (changes.length > 0)
+            await logActivity(
+              tx as unknown as Db,
+              {
+                companyId: endpoint.companyId,
+                actorType: "user",
+                actorId: actorUserId ?? "board",
+                action: "chat_endpoint.resources_updated",
+                entityType: "tool_connection",
+                entityId: endpoint.connectionId,
+                details: { endpointId, provider: endpoint.provider, changes },
+              },
+              publications,
+            );
           await credentialLease.assertOwned(tx);
         });
+        // A committed reach change is factual even if the outer lease's last
+        // check subsequently fails. Never publish an uncommitted activity.
+        for (const publication of publications) publishActivity(publication);
       },
     );
     return listResources(endpointId);

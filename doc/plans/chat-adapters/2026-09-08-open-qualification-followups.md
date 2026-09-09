@@ -24,7 +24,76 @@ stack ancestry. Neither the provisional count nor prior-head review is final
 verification. Root continues live qualification in the original worktree and
 does not push the remotely coordinated branch.
 
-## Current work — September 9, 21:34 UTC
+## Current work — September 9, 22:16 UTC
+
+Published integration PR #13038 at `2148ea2f…` has **386 files**. Fresh CI
+`34407804049` completed successfully at 21:53 UTC: all **24 jobs** passed,
+including the required verification and browser aggregates. The isolated chat
+suite passes **985/985** in a 10m55s job; the slowest general shard completes
+in 14m53s without changing the 20-minute job limits. Exact-head Greptile
+completed **5/5** at 21:41 UTC. The PR is open and mergeable, but still needs
+human CODEOWNER approval. Review requests are not approvals; no bypass or
+self-approval is permitted. The published head remains unchanged while the
+new follow-up below is developed locally.
+
+The user's Telegram login enabled three real-client follow-ups:
+
+- A one-second synthetic silent MP4 was sent through native Telegram, inspected
+  by the **native Codex Luna** runner, and returned once as an attachment. The
+  received source and current-run return binding both contain the exact 997
+  bytes; the returned native video opens to the expected teal frame. The input
+  client presents this silent MP4 as a GIF/animation, so this is not proof of
+  every Telegram video/audio subtype. Click-to-file was **64.699s**, of which
+  60.669s was agent execution; it was not a minute waiting in the chat queue.
+- An explicit Board **Send to channel** of exactly 100,000 JavaScript characters
+  published once in **1.195s** as a Markdown file. The actual downloaded file
+  is 100,009 UTF-8 bytes and matches the saved source's complete SHA-256,
+  including Unicode and beginning/middle/end markers. The provider reader was
+  inspected, and no agent run was created. Publishing an already-existing
+  comment is a separate live-unqualified API path, not silently substituted by
+  sending another new comment.
+- Telegram's real native Stop button was observed and clicked on a second
+  bounded draft attempt. The permanent final still appeared: the endpoint's
+  subsequent webhook arrived after publication. This does **not** qualify
+  pre-final suppression, nor prove the exact callback kind from redacted logs.
+  No artificial delay, deleted final, forged callback or third blind retry.
+
+Discord's existing QA thread passed a real **status → channel disabled → private
+denial → channel restored → status** journey. The original channel access was
+restored and verified after reload; other channels, DMs and the linked owner
+were unchanged. Both successful statuses privately identified the same CHA-43;
+the denial created no task, run or publication. This is current destination
+reach, not a role-revocation, provider-403 or in-flight race qualification.
+
+That journey exposed two concrete follow-ups. Resource changes have no
+actor-and-before/after activity history, despite their successful HTTP logs.
+The generic denial also tells an already-linked owner to link their account.
+A local atomic audit repair passes **13/13** focused integration checks: ten
+new audit cases and three existing authorization/resource-revocation controls
+on a fresh fixture database, with 972 cases not selected. The new real-route
+regression genuinely failed before the repair. Exact actor and net before/after
+state persist together; no-op retries create no audit, failed transactions
+publish no event, and concurrent saves retain consistent history. Injected
+lease-guard failures distinguish precommit rollback from a committed change
+followed by an outer guard failure; they are not actual lease takeover proof.
+Independent source review and final server typecheck pass. The fixed generic
+denial now asks an operator to
+check chat access without revealing the internal rejection reason; its real
+discord.js boundary regression genuinely failed first, then **100/100** focused
+native-command/runtime tests passed, repeated on the final local source.
+Neither repair is deployed to Live83 or
+included in the reviewed `2148ea2f…` yet. Preserve the current server and
+credentials; transfer only the qualified follow-up diff to the landing lane.
+If #13038 is still open, fold the repairs into it to retain the two-chat-PR
+split, then run full composed integration, fresh CI and exact-head review.
+The earlier 2148 CI/review cannot qualify changed successor bytes.
+
+Teams still needs an eligible work tenant and bot installation. Telegram
+native Stop suppression and the remaining media/permission variants remain
+explicitly unqualified. The permanent log below records exact evidence and
+limitations; these results are not a blanket production-readiness claim.
+
+### Prior checkpoint — September 9, 21:34 UTC
 
 Published integration head `ed1b6a6e…` remains **384 files**. Its fresh Greptile
 review completed at 21:11 UTC with **4/5**, identifying the tracked lockfile's

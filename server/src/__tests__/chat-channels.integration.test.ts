@@ -123,6 +123,7 @@ import { getExternalChannelBindingSummary } from "../services/chat-channel-bindi
 import { PaperclipRunnerToolAuthority } from "../services/native-runtime/paperclip-runner-tool-authority.js";
 import { NativeChatAttachmentReadScope } from "../services/native-runtime/chat-attachment-read.js";
 import { logActivity } from "../services/activity-log.js";
+import { subscribeCompanyLiveEvents } from "../services/live-events.js";
 import { issueThreadInteractionService } from "../services/issue-thread-interactions.js";
 import { questionResponseDeliveryService } from "../services/question-response-delivery.js";
 import * as chatQuestionForms from "../services/chat-question-forms.js";
@@ -2949,6 +2950,509 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       .from(chatEndpoints)
       .where(eq(chatEndpoints.companyId, fixture.companyId));
     expect(endpoints).toEqual([]);
+  });
+
+  describe("resource change auditing", () => {
+    async function setupResourceAudit() {
+      const fixture = await seedCompany();
+      const context = createService();
+      const endpoint = await context.service.create(
+        fixture.companyId,
+        {
+          provider: "slack",
+          assignedAgentId: fixture.assignedAgentId,
+        },
+        "owner-user",
+      );
+      const resources = await db
+        .insert(chatEndpointResources)
+        .values([
+          {
+            companyId: fixture.companyId,
+            endpointId: endpoint.id,
+            type: "channel",
+            providerResourceId: "C-AUDIT-FIRST",
+            label: "private-label-not-for-audit",
+            metadata: { credential: "private-resource-metadata" },
+            enabled: true,
+            availability: "available",
+          },
+          {
+            companyId: fixture.companyId,
+            endpointId: endpoint.id,
+            type: "channel",
+            providerResourceId: "C-AUDIT-SECOND",
+            label: "second",
+            enabled: false,
+            availability: "available",
+          },
+        ])
+        .returning();
+      const audits = () =>
+        db
+          .select()
+          .from(activityLog)
+          .where(
+            and(
+              eq(activityLog.companyId, fixture.companyId),
+              eq(activityLog.action, "chat_endpoint.resources_updated"),
+            ),
+          )
+          .orderBy(asc(activityLog.createdAt));
+      return {
+        ...context,
+        ...fixture,
+        endpoint,
+        resources,
+        audits,
+        app: routesApp(db, fixture.companyId, context.service),
+      };
+    }
+
+    it("records exact actual changes and authenticated route actor, without resource content", async () => {
+      const context = await setupResourceAudit();
+      const { app, audits, companyId, endpoint, resources, service, wakeup } =
+        context;
+      const events: unknown[] = [];
+      const unsubscribe = subscribeCompanyLiveEvents(companyId, (event) => {
+        if (
+          event.type === "activity.logged" &&
+          event.payload.action === "chat_endpoint.resources_updated"
+        )
+          events.push(event.payload);
+      });
+      try {
+        await request(app)
+          .put(`/api/chat-endpoints/${endpoint.id}/resources`)
+          .send({
+            resources: resources.map((resource) => ({
+              id: resource.id,
+              enabled: false,
+            })),
+          })
+          .expect(200);
+        const rows = await audits();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+          companyId,
+          actorType: "user",
+          actorId: "owner-user",
+          responsibleUserId: "owner-user",
+          entityType: "tool_connection",
+          entityId: endpoint.connectionId,
+          details: {
+            endpointId: endpoint.id,
+            provider: "slack",
+            changes: [
+              {
+                resourceId: resources[0]!.id,
+                before: { enabled: true },
+                after: { enabled: false },
+              },
+            ],
+          },
+        });
+        expect(rows[0]!.details).toEqual({
+          endpointId: endpoint.id,
+          provider: "slack",
+          changes: [
+            {
+              resourceId: resources[0]!.id,
+              before: { enabled: true },
+              after: { enabled: false },
+            },
+          ],
+        });
+        expect(events).toHaveLength(1);
+        expect(JSON.stringify(events)).not.toContain("private-");
+        await request(app)
+          .put(`/api/chat-endpoints/${endpoint.id}/resources`)
+          .send({
+            resources: [{ id: resources[0]!.id, enabled: true }],
+            actorUserId: "spoofed",
+          })
+          .expect(400);
+        await request(app)
+          .put(`/api/chat-endpoints/${endpoint.id}/resources`)
+          .send({
+            resources: resources.map((resource) => ({
+              id: resource.id,
+              enabled: false,
+            })),
+          })
+          .expect(200);
+        await request(app)
+          .put(`/api/chat-endpoints/${endpoint.id}/resources`)
+          .send({ resources: [] })
+          .expect(200);
+        expect(await audits()).toHaveLength(1);
+        expect(events).toHaveLength(1);
+        expect(wakeup).not.toHaveBeenCalled();
+      } finally {
+        unsubscribe();
+        await service.shutdown();
+      }
+    });
+  });
+
+  describe("resource change audit atomicity", () => {
+    async function fixtureForAudit(
+      overrides: Parameters<typeof createService>[2] = {},
+    ) {
+      const fixture = await seedCompany();
+      const context = createService(undefined, undefined, overrides);
+      const endpoint = await context.service.create(
+        fixture.companyId,
+        {
+          provider: "slack",
+          assignedAgentId: fixture.assignedAgentId,
+        },
+        "owner-user",
+      );
+      const [resource] = await db
+        .insert(chatEndpointResources)
+        .values({
+          companyId: fixture.companyId,
+          endpointId: endpoint.id,
+          type: "channel",
+          providerResourceId: "C-RESOURCE-AUDIT",
+          label: "audit",
+          availability: "available",
+          enabled: true,
+        })
+        .returning();
+      const audits = () =>
+        db
+          .select()
+          .from(activityLog)
+          .where(
+            and(
+              eq(activityLog.companyId, fixture.companyId),
+              eq(activityLog.action, "chat_endpoint.resources_updated"),
+            ),
+          )
+          .orderBy(asc(activityLog.createdAt));
+      const current = () =>
+        db
+          .select({ enabled: chatEndpointResources.enabled })
+          .from(chatEndpointResources)
+          .where(eq(chatEndpointResources.id, resource!.id));
+      const events: unknown[] = [];
+      const unsubscribe = subscribeCompanyLiveEvents(
+        fixture.companyId,
+        (event) => {
+          if (
+            event.type === "activity.logged" &&
+            event.payload.action === "chat_endpoint.resources_updated"
+          )
+            events.push(event.payload);
+        },
+      );
+      return {
+        ...context,
+        ...fixture,
+        endpoint,
+        resource: resource!,
+        audits,
+        current,
+        events,
+        async cleanup() {
+          unsubscribe();
+          await context.service.shutdown();
+        },
+      };
+    }
+
+    it("keeps duplicate last-write semantics but audits only net changes", async () => {
+      const context = await fixtureForAudit();
+      const { service, endpoint, resource, audits, events } = context;
+      try {
+        await service.replaceResources(
+          endpoint.id,
+          [
+            { id: resource.id, enabled: false },
+            { id: resource.id, enabled: true },
+          ],
+          "owner-user",
+        );
+        expect(await audits()).toEqual([]);
+        expect(events).toEqual([]);
+        await service.replaceResources(
+          endpoint.id,
+          [
+            { id: resource.id, enabled: true },
+            { id: resource.id, enabled: false },
+          ],
+          "owner-user",
+        );
+        expect(await context.current()).toEqual([{ enabled: false }]);
+        expect(await audits()).toMatchObject([
+          {
+            details: {
+              changes: [
+                {
+                  resourceId: resource.id,
+                  before: { enabled: true },
+                  after: { enabled: false },
+                },
+              ],
+            },
+          },
+        ]);
+        expect(events).toHaveLength(1);
+      } finally {
+        await context.cleanup();
+      }
+    });
+
+    it.each(["foreign", "unavailable"] as const)(
+      "rolls back the entire %s resource batch without audit or events",
+      async (kind) => {
+        const context = await fixtureForAudit();
+        const foreign = await fixtureForAudit();
+        try {
+          const [other] = await db
+            .insert(chatEndpointResources)
+            .values({
+              companyId: context.companyId,
+              endpointId: context.endpoint.id,
+              type: "channel",
+              providerResourceId: "C-UNAVAILABLE",
+              label: "unavailable",
+              availability: "unavailable",
+              enabled: false,
+            })
+            .returning();
+          await expect(
+            context.service.replaceResources(
+              context.endpoint.id,
+              [
+                { id: context.resource.id, enabled: false },
+                ...(kind === "foreign"
+                  ? [{ id: foreign.resource.id, enabled: false }]
+                  : [
+                      { id: other!.id, enabled: true },
+                      { id: other!.id, enabled: false },
+                    ]),
+              ],
+              "owner-user",
+            ),
+          ).rejects.toMatchObject({ status: kind === "foreign" ? 422 : 409 });
+          expect(await context.current()).toEqual([{ enabled: true }]);
+          expect(await foreign.current()).toEqual([{ enabled: true }]);
+          expect(await context.audits()).toEqual([]);
+          expect(context.events).toEqual([]);
+          expect(foreign.events).toEqual([]);
+        } finally {
+          await context.cleanup();
+          await foreign.cleanup();
+        }
+      },
+    );
+
+    it.each(["audit_insert", "after_audit"] as const)(
+      "rolls back resource writes and suppresses events on %s failure",
+      async (failureAt) => {
+        const context = await fixtureForAudit();
+        const failure = new Error(`resource-audit-${failureAt}`);
+        const transaction = db.transaction.bind(db);
+        let sawAudit = false;
+        const transactionSpy = vi
+          .spyOn(db, "transaction")
+          .mockImplementation((callback, config) =>
+            transaction(async (tx) => {
+              const insert = tx.insert.bind(tx);
+              const insertSpy = vi
+                .spyOn(tx, "insert")
+                .mockImplementation((table) => {
+                  if (table === activityLog && failureAt === "audit_insert") {
+                    sawAudit = true;
+                    throw failure;
+                  }
+                  return insert(table);
+                });
+              try {
+                const result = await callback(tx);
+                if (failureAt === "after_audit") {
+                  const rows = await tx
+                    .select()
+                    .from(activityLog)
+                    .where(
+                      and(
+                        eq(activityLog.companyId, context.companyId),
+                        eq(
+                          activityLog.action,
+                          "chat_endpoint.resources_updated",
+                        ),
+                      ),
+                    );
+                  expect(rows).toHaveLength(1);
+                  sawAudit = true;
+                  expect(context.events).toEqual([]);
+                  throw failure;
+                }
+                return result;
+              } finally {
+                insertSpy.mockRestore();
+              }
+            }, config),
+          );
+        try {
+          await expect(
+            context.service.replaceResources(
+              context.endpoint.id,
+              [{ id: context.resource.id, enabled: false }],
+              "owner-user",
+            ),
+          ).rejects.toBe(failure);
+          expect(sawAudit).toBe(true);
+          expect(await context.current()).toEqual([{ enabled: true }]);
+          expect(await context.audits()).toEqual([]);
+          expect(context.events).toEqual([]);
+        } finally {
+          transactionSpy.mockRestore();
+          await context.cleanup();
+        }
+      },
+    );
+
+    it.each(["inside_transaction", "after_commit"] as const)(
+      "keeps the audit aligned with commit on lease loss %s",
+      async (failureAt) => {
+        let renewals = 0;
+        const context = await fixtureForAudit({
+          credentialMutationLeaseRenewalIntervalMs: 60_000,
+          renewCredentialMutationLease: async () =>
+            ++renewals !== (failureAt === "inside_transaction" ? 2 : 3),
+        });
+        try {
+          await expect(
+            context.service.replaceResources(
+              context.endpoint.id,
+              [{ id: context.resource.id, enabled: false }],
+              "owner-user",
+            ),
+          ).rejects.toMatchObject({ code: "CHAT_CREDENTIAL_LEASE_LOST" });
+          const committed = failureAt === "after_commit";
+          expect(await context.current()).toEqual([{ enabled: !committed }]);
+          expect(await context.audits()).toHaveLength(committed ? 1 : 0);
+          expect(context.events).toHaveLength(committed ? 1 : 0);
+          await context.service.replaceResources(
+            context.endpoint.id,
+            [{ id: context.resource.id, enabled: false }],
+            "owner-user",
+          );
+          expect(await context.audits()).toHaveLength(1);
+          expect(context.events).toHaveLength(1);
+        } finally {
+          await context.cleanup();
+        }
+      },
+    );
+
+    it("reads the actual resource state after the row lock, not a pre-lock snapshot", async () => {
+      const context = await fixtureForAudit();
+      let ready!: (pid: number) => void;
+      const held = new Promise<number>((resolve) => {
+        ready = resolve;
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const transaction = db.transaction(async (tx) => {
+        await tx
+          .update(chatEndpointResources)
+          .set({ enabled: false })
+          .where(eq(chatEndpointResources.id, context.resource.id));
+        const [row] = (await tx.execute(
+          sql`select pg_backend_pid() as pid`,
+        )) as unknown as Array<{ pid: number }>;
+        ready(row!.pid);
+        await gate;
+      });
+      let mutation: Promise<unknown> | undefined;
+      try {
+        const pid = await held;
+        mutation = context.service.replaceResources(
+          context.endpoint.id,
+          [{ id: context.resource.id, enabled: false }],
+          "owner-user",
+        );
+        await vi.waitFor(async () => {
+          const [row] = (await db.execute(sql`select exists (
+            select 1 from pg_stat_activity where datname = current_database()
+              and ${pid} = any(pg_blocking_pids(pid))
+          ) as blocked`)) as unknown as Array<{ blocked: boolean }>;
+          expect(row!.blocked).toBe(true);
+        });
+        release();
+        await Promise.all([transaction, mutation]);
+        expect(await context.current()).toEqual([{ enabled: false }]);
+        expect(await context.audits()).toEqual([]);
+        expect(context.events).toEqual([]);
+        await context.service.replaceResources(
+          context.endpoint.id,
+          [{ id: context.resource.id, enabled: true }],
+          "owner-user",
+        );
+        expect(await context.audits()).toMatchObject([
+          {
+            details: {
+              changes: [
+                {
+                  resourceId: context.resource.id,
+                  before: { enabled: false },
+                  after: { enabled: true },
+                },
+              ],
+            },
+          },
+        ]);
+      } finally {
+        release();
+        await Promise.allSettled([
+          transaction,
+          ...(mutation ? [mutation] : []),
+        ]);
+        await context.cleanup();
+      }
+    });
+
+    it("joins concurrent identical and opposite changes into actual before/after history", async () => {
+      const context = await fixtureForAudit();
+      try {
+        const change = (enabled: boolean) =>
+          context.service.replaceResources(
+            context.endpoint.id,
+            [{ id: context.resource.id, enabled }],
+            "owner-user",
+          );
+        await Promise.all([change(false), change(false)]);
+        expect(await context.audits()).toHaveLength(1);
+        await Promise.all([change(true), change(false)]);
+        const rows = await context.audits();
+        expect(rows.length).toBeGreaterThanOrEqual(2);
+        let enabled = true;
+        for (const row of rows) {
+          const changes = row.details!.changes as Array<{
+            resourceId: string;
+            before: { enabled: boolean };
+            after: { enabled: boolean };
+          }>;
+          expect(changes).toHaveLength(1);
+          expect(changes[0]!.resourceId).toBe(context.resource.id);
+          expect(changes[0]!.before.enabled).toBe(enabled);
+          expect(changes[0]!.after.enabled).toBe(!enabled);
+          enabled = !enabled;
+        }
+        expect(await context.current()).toEqual([{ enabled }]);
+        expect(context.events).toHaveLength(rows.length);
+        expect(context.wakeup).not.toHaveBeenCalled();
+      } finally {
+        await context.cleanup();
+      }
+    });
   });
 
   it("requires connection-manager authority for chat connector administration", async () => {

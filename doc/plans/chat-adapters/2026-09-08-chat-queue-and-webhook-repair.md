@@ -7394,3 +7394,169 @@ It is a missed observation window, not proof of an unsupported client or a
 successful cancellation. The next bounded check must confirm native window
 availability and start observation before the send in one synchronized
 interaction. No artificial producer delay or repeated blind sends are justified.
+
+## Completed CI and post-login live qualification — September 9, 22:16 UTC
+
+Integration PR #13038 head `2148ea2f50cdc547cc33456b91c7ad2095bfa676` contains
+386 files. [CI run 34407804049](https://github.com/paperclipai/paperclip/actions/runs/34407804049)
+completed successfully at 21:53:03 UTC, all 24 jobs green. The isolated chat
+suite passes 985/985 with no skips, 591.97s test time / 604.32s total, within
+its 10m55s job. The slowest general shard takes 14m53s with unchanged limits.
+Exact-head [Greptile review](https://github.com/paperclipai/paperclip/pull/13038#issuecomment-5587250594)
+completed 5/5 at 21:41:57 UTC, accepting the official lock and measured shard
+allocation. Human CODEOWNER approval remains missing. This supersedes the
+earlier cancelled run, not its recorded outcome. No bypass, self-approval or
+merge is claimed. New local follow-ups below are not part of this reviewed head.
+
+### Telegram native Stop: button proved, suppression not proved
+
+A second bounded attempt synchronized actual Board and native Telegram UI in
+one controller. Root clicked Board Send at 21:36:28.076 UTC, observed and
+clicked the native **Stop** button at 21:36:29.152, and saw the draft disappear.
+Publication `e15ac3d2-257d-4807-bca2-1855510b6484` nevertheless published at
+21:36:29.791, attempt one, provider message `417200359:198`. Root subsequently
+visually confirmed the permanent text and ending marker. The exact endpoint
+webhook request `df963df1-2263-4267-99f2-404af84ca5d2` arrived at 21:36:30.108,
+317ms after publication and 956ms after the click, and returned HTTP 200.
+
+The request log deliberately omits raw update kind and draft ID. Late Stop is
+consistent with these observations, but its exact authenticated callback and
+the earlier overwritten final-claim timestamp cannot be reconstructed. No
+task/run changed, and no artificial streaming delay or message deletion was
+introduced. The button exists and responds locally; **pre-final suppression
+remains unqualified**. The client hiding a draft is not proof of cancelling a
+task or suppressing a provider send. A pure adapter probe also showed that
+smaller producer chunks still coalesce to two draft RPCs, not a reliable wider
+native Stop window. No third blind attempt was made.
+
+### Telegram silent MP4: received, inspected and returned
+
+The exact existing synthetic fixture, `synthetic-teal-one-second.mp4`, is 997
+bytes with SHA-256
+`908f7f60a20a29309d24fe2a2b81f23baa458e4f3f31aeec58633c1b89a512ca`.
+It is one second, 16×16, one uniformly teal frame, no audio. Root selected the
+file using Telegram Desktop's actual attachment picker. The preview showed
+**Send a video file**, with **Send as a document** unchecked. At 21:53:43.345,
+root sent it once with marker `TG-LIVE83-0909-VIDEO-A`, asking the agent to
+inspect only this attachment and return its original received bytes unchanged.
+The sent native UI labels it **GIF**: this is silent-MP4/animation coverage,
+not an assertion that the inbound payload was exactly `message.video`.
+
+Delivery `0666424f-a400-40f2-8afd-a767a5cd8082`, source `417200359:199`, arrived
+at 21:53:44.385 and processed on attempt one at 45.663. The current comment
+owns attachment `98dd8a43-7b51-4d0f-a69b-46aa8ee656fd`; its bytes match the
+fixture. Native `codex_app_server` / `gpt-5.6-luna` run
+`7d003f86-755b-4c90-b20d-6c6476d8ceb4` started at 45.691 and succeeded at
+21:54:46.360. Working and progress updates reused message 200; the final
+description edited it at 47.033, correctly describing the one-second teal
+clip. The eyes reaction cleared at 47.294. Exactly one returned file appeared
+as message 201 at 48.044, publication `7fb2b7ab-5d7f-411c-b61d-4387ce111b3b`.
+Its attachment `7d8ee2d8-1d26-4df2-8d31-8dd77a1d4a25` is bound to this exact
+run and matches the current received file's complete bytes and hash.
+
+Root saw the native **Video** card (997B, 16×16, 00:01), opened its actual media
+viewer and inspected the teal frame and playback end. Click-to-file was
+64.699s: 1.040s ingress, 1.306s ingress-to-run, 60.669s execution, 1.684s
+finish-to-file. The provider turn itself took 58.026s. The trace shows one
+mistyped workspace path followed by recovery; it does not establish a precise
+latency split for that mistake. This is useful working media delivery, but the
+minute-long agent execution is still noticeable. No independently downloaded
+return hash, exact raw inbound subtype, named reuse-tool invocation, or full
+Telegram media-family qualification is claimed. Same CHA-50 and generation16.
+
+### Telegram 100k Board publication: complete downloaded bytes
+
+Root used CHA-50's explicit **Send to channel**, not its ordinary agent
+composer. The actual textarea was read and hashed before sending: 100,000
+JavaScript characters (99,999 code points), 100,009 UTF-8 bytes, SHA-256
+`60bc818abdd3c9954ad58fe717a8813bbcc4ae5ee2df2240b4a68fdd801a4be3`.
+The synthetic Markdown includes Unicode, escaped punctuation, a closed code
+block, and `TG-LIVE83-0909-LONG100K-A` BEGIN/MIDDLE/END markers at JavaScript
+indices 0, 50,001 and 99,971. Root clicked Send once at 21:58:32.325; the form
+showed Sending, then cleared and collapsed. One comment `2e22643d…` was saved
+at 32.371; one publication `e3965a83…` published at 33.520 on attempt one,
+provider message 202, `telegram_markdown_attachment`, part 0 of 1. No agent
+run or wake was created. Click-to-publication was 1.195s.
+
+Native Telegram showed the downloaded 97.6KB Markdown file and an accurate
+complete-response caption. The actual Telegram Web Instant View reader opened
+the file; root visually inspected beginning/Unicode/escaped punctuation/code
+formatting and the ending marker. The middle marker was present in the actual
+reader accessibility tree, not separately screenshotted. The native downloaded
+`paperclip-response.md` is exactly 100,009 bytes and has the complete source
+hash; root and an independent agent read and verified it. The independent check
+also validated UTF-8 and all marker positions. Source text existed only in
+memory before the provider download, not in a precreated local lookalike file.
+
+This qualifies **new explicit Board publication** end to end. Publishing an
+already-existing comment is a distinct API path. The current native Board chat
+UI exposes only the new-send composer, not an existing-comment publish action;
+no second new comment was passed off as that journey. The existing-comment
+path retains deterministic coverage but remains live-unqualified.
+
+### Discord current reach: private denial and exact restoration
+
+The existing Clawd QA thread `1547256172023779448`, under #general
+`1457808933082108089`, remained bound to CHA-43. A read-only preflight confirmed
+no running/queued agent work or unsettled provider effects. Root used Discord's
+real native command picker to invoke `/paperclip status` at 22:02:30.612 UTC;
+the private reply identified CHA-43 / in_progress. Root disabled only
+**Enable #general** at 22:03:52.783, verified OFF after reload at 22:04:11.181,
+and invoked a fresh native status at 22:04:18.858. The actual private response
+was: “This command is not available here. Open the Paperclip task or ask an
+operator to link this account.” It showed **Only you can see this**.
+
+Root restored #general at 22:06:55.237 (persisted at 55.261), reloaded and
+verified ON at 22:07:05.842. All ten other channels remained OFF and DMs ON.
+A fresh native status at 22:07:27.846 again returned CHA-43 / in_progress
+privately. The 22:07:47.488 screenshot shows baseline, denial and restored
+responses together. An independent 22:08:08.184 read-only snapshot confirms
+the original endpoint/runtime/identity/settings and unchanged task state:
+50 company tasks, 222 channel comments, 94 runs, 103 wakes, 266 endpoint
+publications and 120 deliveries; no pending work. Only the two successful
+status receipts were added. This tests current destination authorization, not
+actor-role revocation, Discord-side 403 or an in-flight race.
+
+Functional access enforcement passes and the original settings are restored.
+Experience quality needs two repairs: an already-linked owner receives
+misleading account-linking guidance, and resource changes have no
+actor-and-before/after activity history. Route, service, middleware and actual
+activity rows confirm the latter; successful HTTP PUT logs and `updatedAt`
+are not an audit trail. Local fixes are being qualified separately from the
+published head. The generic response is being changed to ask an operator to
+**check your chat access**, retaining privacy and no disclosed rejection
+reason. Its exact real-discord.js boundary expectation genuinely failed first;
+after the change, 100 focused native-command/runtime checks pass, independently
+repeated against the final local source in 4.08s.
+
+The atomic resource-audit repair now passes **13/13** focused integration tests
+on fresh fixture database `chat_resource_audit_20260909_green02`, 8.12s total /
+1.04s test time, with 972 cases not selected. Ten new cases cover real manager
+PUT and authenticated actor, secret-free exact net deltas, empty/same/replayed
+and duplicate no-ops, foreign/unavailable batch rejection, audit-insert and
+post-audit/precommit rollback without events, injected precommit versus
+postcommit lease-guard failure, a real blocked-row snapshot, and concurrent
+identical/opposite changes. Three existing controls cover manager authorization,
+canonical resource identifiers and disable during a held Slack publication.
+The actual route test first failed because a successful mutation produced no
+activity row, on separate fresh `chat_resource_audit_20260909_red01`.
+
+The implementation preserves lease-row → endpoint → sorted-resource locking
+and validation of every submitted enable, including intermediate duplicates.
+Only net original-to-final changes enter an allowlisted audit payload. The
+audit is durable in the same transaction as the resource change; activity
+notification occurs after commit, even if the outer lease guard subsequently
+fails. Live event delivery retains the existing best-effort semantics, not a
+new crash-proof outbox guarantee. The transaction-spy rollback case is distinct
+from the injected lease-guard cases; neither establishes actual lease takeover.
+The blocked-row case proves a locked current snapshot, not a newly attributed
+provider-lifecycle race. Final plain server typecheck, scoped formatting and
+independent review pass. Frozen SHA-256 values: route
+`2c5663f1b83d3c39cbeb4377a3870342dd01442581174585899b072dddd0d596`, service
+`b6e78b2a72a85991cb4ded67aa606853d2507285cf3ccbc76394d7c0426a5a68`, tests
+`c4b19c8ba222c7af8379bfcc0d3fa058d93fdc52a372fa142979b6f75e052bdc`.
+
+Neither fix has been deployed to Live83 or included in reviewed 2148 yet. The
+landing lane must apply only this follow-up delta, preserving its newer service
+and integration fixes, then qualify the full composition. Any successor needs
+fresh CI and exact-head review; human CODEOWNER approval remains required.

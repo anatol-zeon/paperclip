@@ -190,7 +190,11 @@ export function chatChannelRoutes(db: Db, options: ChatChannelRouteOptions) {
     async (req, res) => {
       if (!(await assertEndpointManagementAccess(req, res))) return;
       res.json(
-        await service.replaceResources(endpointId(req), req.body.resources),
+        await service.replaceResources(
+          endpointId(req),
+          req.body.resources,
+          actorUserId(req),
+        ),
       );
     },
   );
