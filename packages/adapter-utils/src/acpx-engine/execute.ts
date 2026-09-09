@@ -87,6 +87,7 @@ import {
   type AcpRuntimeTurnResult,
   type AcpRuntimeUsageBreakdown,
   type AcpRuntimeUsageCost,
+  type AcpSessionStore,
 } from "acpx/runtime";
 import {
   ACPX_HANDSHAKE_TIMEOUT_MS,
@@ -4046,6 +4047,27 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
         processIdentitySink.current = ctx.onSpawn;
         flushChildStderr(childStderrState);
         childStderrState.logPath = prepared.childStderrLogPath;
+        const persistedRuntimeStore = createRuntimeStore({ stateDir: prepared.stateDir });
+        const runtimeStore: AcpSessionStore = {
+          async load(id) {
+            const record = await persistedRuntimeStore.load(id);
+            if (!record) return undefined;
+            // ACPX resumes from the stored session options rather than the
+            // options passed to ensureSession. Keep conversation state, but
+            // launch the provider with this run's credentials and scratch paths.
+            return {
+              ...record,
+              acpx: {
+                ...record.acpx,
+                session_options: {
+                  ...record.acpx?.session_options,
+                  env: { ...prepared.env },
+                },
+              },
+            };
+          },
+          save: (record) => persistedRuntimeStore.save(record),
+        };
         const runtimeOptions: PaperclipAcpRuntimeOptions = {
           cwd: prepared.cwd,
           // Host-only spawn cwd for the relay proxy on the remote process-session
@@ -4054,7 +4076,7 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
           // fingerprint / compat key are unaffected — this redirects ONLY the host
           // `spawn()` `chdir`, not the in-sandbox data path.
           spawnCwd: prepared.hostSpawnCwd,
-          sessionStore: createRuntimeStore({ stateDir: prepared.stateDir }),
+          sessionStore: runtimeStore,
           agentRegistry: prepared.agentRegistry,
           permissionMode: prepared.permissionMode,
           nonInteractivePermissions: prepared.nonInteractivePermissions,

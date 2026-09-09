@@ -21,7 +21,7 @@ for (const { unfinishedWrite, pause } of [{ unfinishedWrite: false, pause: false
         name: "ACP Stop fixture", role: "engineer", adapterType: "claude_local",
         adapterConfig: { engine: "acp", cwd: root, stateDir: path.join(root, "state"),
           agentCommand: `${JSON.stringify(process.execPath)} ${JSON.stringify(path.resolve("scripts/mcp-fixtures/servers/acp-stop-agent.mjs"))}`,
-          env: { PAPERCLIP_STOP_FIXTURE_ROOT: root, ...(unfinishedWrite ? { PAPERCLIP_STOP_FIXTURE_TOOL: "write" } : {}) },
+          env: { PAPERCLIP_STOP_FIXTURE_ROOT: root, PAPERCLIP_STOP_FIXTURE_FINISH_TASK: "1", ...(unfinishedWrite ? { PAPERCLIP_STOP_FIXTURE_TOOL: "write" } : {}) },
         }, runtimeConfig: { heartbeat: { enabled: false, wakeOnDemand: true } },
       } }));
       const issue = await json(await request.post(`/api/companies/${company.id}/issues`, { data: {
@@ -38,15 +38,17 @@ for (const { unfinishedWrite, pause } of [{ unfinishedWrite: false, pause: false
       await expect.poll(async () => JSON.stringify(await json(await request.get(`/api/issues/${issue.id}/queued-comments`))))
         .toContain("List my recent Drive files.");
 
-      // Run-level Stop matches TES-1; composer Stop additionally pauses the task.
+      // Run-level Stop leaves the task unpaused; composer Stop additionally pauses the task.
       let stopped;
       if (pause) {
         await page.getByRole("button", { name: "Stop", exact: true }).click();
-        await expect.poll(async () => {
-          stopped = await json(await request.get(`/api/heartbeat-runs/${active.id}`));
-          return stopped.resultJson?.executionCancellation?.state;
-        }, { timeout: 30_000 }).toBe("acknowledged");
-      } else stopped = await json(await request.post(`/api/heartbeat-runs/${active.id}/cancel`));
+      } else {
+        await page.getByRole("button", { name: "Interrupt", exact: true }).click();
+      }
+      await expect.poll(async () => {
+        stopped = await json(await request.get(`/api/heartbeat-runs/${active.id}`));
+        return stopped.resultJson?.executionCancellation?.state;
+      }, { timeout: 30_000 }).toBe("acknowledged");
       expect(stopped.status).toBe("cancelled");
       expect(stopped.resultJson.executionCancellation.state).toBe("acknowledged");
       const writesAtStop = unfinishedWrite ? await readFile(path.join(root, "writes"), "utf8") : null;
@@ -56,10 +58,13 @@ for (const { unfinishedWrite, pause } of [{ unfinishedWrite: false, pause: false
       await page.getByRole("button", { name: "Send", exact: true }).click();
       if (pause) {
         await expect(page.getByText("Task is paused.", { exact: true })).toBeVisible();
-        expect(await json(await request.get(`/api/issues/${issue.id}/live-runs`))).toEqual([]);
-        expect((await readFile(path.join(root, "prompts"), "utf8")).trim().split("\n")).toHaveLength(1);
-        await page.getByRole("button", { name: "More task actions", exact: true }).click();
-        await page.locator('[data-slot="popover-content"]').getByRole("button", { name: "Resume work", exact: true }).click();
+        await expect(page.getByText("Task remains paused. Use Resume work to continue.", { exact: false })).toBeVisible();
+        await expect.poll(async () => (await json(await request.get(`/api/issues/${issue.id}/live-runs`))).length).toBe(0);
+        const pausedPrompts = (await readFile(path.join(root, "prompts"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
+        expect(pausedPrompts).toHaveLength(2);
+        expect(JSON.stringify(pausedPrompts[1])).toContain("execution scope: respond or triage the human comment");
+        expect(await readFile(path.join(root, "completed"), "utf8").catch(() => "")).toBe("");
+        await page.getByRole("button", { name: "Resume work", exact: true }).click();
         const dialog = page.getByRole("dialog");
         await dialog.getByRole("checkbox").check();
         await dialog.getByRole("button", { name: "Resume work", exact: true }).click();
@@ -72,12 +77,19 @@ for (const { unfinishedWrite, pause } of [{ unfinishedWrite: false, pause: false
         expect((await readFile(path.join(root, "prompts"), "utf8")).trim().split("\n")).toHaveLength(1);
       } else {
         await expect(page.getByText("Answered the pending follow-up once.", { exact: false })).toBeVisible({ timeout: 30_000 });
+        await expect.poll(async () => (await json(await request.get(`/api/issues/${issue.id}/live-runs`))).length).toBe(0);
         const prompts = (await readFile(path.join(root, "prompts"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
-        expect(prompts).toHaveLength(2);
-        expect(prompts[1].sessionId).toBe(prompts[0].sessionId);
-        expect(JSON.stringify(prompts[1])).toContain("List my recent Drive files.");
-        expect(JSON.stringify(prompts[1])).toContain("go");
-        expect((await json(await request.get(`/api/issues/${issue.id}`))).executionBlocker).toBeNull();
+        expect(prompts).toHaveLength(pause ? 3 : 2);
+        expect(new Set(prompts.map(prompt => prompt.sessionId)).size).toBe(1);
+        // Paused conversation already delivered the request into this same
+        // provider session; Resume legitimately sends only its next delta.
+        const continuationPrompts = pause ? prompts.slice(1) : [prompts.at(-1)];
+        expect(JSON.stringify(continuationPrompts)).toContain("List my recent Drive files.");
+        expect(JSON.stringify(continuationPrompts)).toContain("go");
+        expect(await readFile(path.join(root, "completed"), "utf8")).toBe("follow-up\n");
+        const completedIssue = await json(await request.get(`/api/issues/${issue.id}`));
+        expect(completedIssue.executionBlocker).toBeNull();
+        expect(completedIssue.status).toBe("done");
       }
       await expect(page.getByRole("dialog")).toHaveCount(0);
     } finally {

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Deterministic ACP process for interruption and same-session continuation tests.
 import fs from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 const root = process.env.PAPERCLIP_STOP_FIXTURE_ROOT ?? process.cwd();
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -22,8 +22,24 @@ async function request(message) {
       return {};
     case 'session/prompt': {
       fs.appendFileSync(`${root}/prompts`, `${JSON.stringify(message.params)}\n`);
+      fs.appendFileSync(`${root}/run-env`, `${JSON.stringify({ runId: process.env.PAPERCLIP_RUN_ID, tokenHash: createHash('sha256').update(process.env.PAPERCLIP_API_KEY ?? '').digest('hex'), scratchDir: process.env.PAPERCLIP_RUN_SCRATCH_DIR })}\n`);
       if (fs.existsSync(`${root}/continued`)) {
-        update(message.params.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Answered the pending follow-up once.' } });
+        const paused = JSON.stringify(message.params.prompt).includes('tree-hold interaction: yes');
+        if (!paused) {
+          fs.appendFileSync(`${root}/completed`, 'follow-up\n');
+          // Browser journeys finish the task through the normal agent API so
+          // the scheduler does not need a separate successful-run handoff.
+          if (process.env.PAPERCLIP_STOP_FIXTURE_FINISH_TASK === '1') {
+            const base = process.env.PAPERCLIP_API_URL.replace(/\/api\/?$/, '').replace(/\/$/, '');
+            const response = await fetch(`${base}/api/issues/${process.env.PAPERCLIP_TASK_ID}`, {
+              method: 'PATCH',
+              headers: { 'content-type': 'application/json', authorization: `Bearer ${process.env.PAPERCLIP_API_KEY}`, 'X-Paperclip-Run-Id': process.env.PAPERCLIP_RUN_ID },
+              body: JSON.stringify({ status: 'done' }),
+            });
+            if (!response.ok) throw new Error(`Task completion failed: ${response.status} ${await response.text()}`);
+          }
+        }
+        update(message.params.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: paused ? 'Task remains paused. Use Resume work to continue.' : 'Answered the pending follow-up once.' } });
         return { stopReason: 'end_turn' };
       }
       active = message;

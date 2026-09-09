@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import { afterEach, expect, it } from 'vitest';
 import type { AdapterExecutionContext } from '../types.js';
 import { createAcpxEngineExecutor } from './execute.js';
@@ -27,6 +28,7 @@ async function setup(tool?: string) {
 }
 it('stops an actual ACP process and resumes its established session with the new request', async () => {
   const { root, ctx, abort, started, execute } = await setup('read');
+  ctx.authToken = 'first-run-test-token';
   const running = execute(ctx);
   await started;
   abort.abort(new Error('Operator Stop'));
@@ -35,12 +37,15 @@ it('stops an actual ACP process and resumes its established session with the new
   expect(result.executionRecovery).toMatchObject({ kind: 'interrupted', sessionPreserved: true });
   const params = sessionCodec.serialize(result.sessionParams ?? null);
   expect(params?.interruptedCheckpoint).toBe(true);
-  const next = await execute({ ...ctx, runId: 'follow-up', signal: undefined, context: { prompt: 'List recent Drive files' },
+  const next = await execute({ ...ctx, runId: 'follow-up', authToken: 'follow-up-test-token', signal: undefined, context: { prompt: 'List recent Drive files' },
     runtime: { ...ctx.runtime, sessionParams: params } });
   expect(next.exitCode).toBe(0);
   const prompts = (await fs.readFile(path.join(root, 'prompts'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
   expect(prompts).toHaveLength(2);
   expect(prompts[1].sessionId).toBe(prompts[0].sessionId);
+  const launches = (await fs.readFile(path.join(root, 'run-env'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  expect(launches.map(launch => launch.runId)).toEqual(['stop-test', 'follow-up']);
+  expect(launches[1].tokenHash).toBe(createHash('sha256').update('follow-up-test-token').digest('hex'));
 });
 it('stops writes but does not authorize replay when the interrupted tool has no outcome', async () => {
   const { root, ctx, abort, started, execute } = await setup('write');
