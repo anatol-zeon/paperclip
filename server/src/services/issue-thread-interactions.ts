@@ -818,21 +818,38 @@ function shouldSupersedeInteractionOnUserComment(interaction: UserCommentSuperse
   return interaction.payload.supersedeOnUserComment === true;
 }
 
-// `createdByRunId` catches machine comments that come from a heartbeat run, but not
-// every machine posts from one. Local automation — pipeline monitors, cron scripts,
-// gateway hooks — authenticates with a board/user token and carries no run context, so
-// its comments are byte-identical to a human's at this decision point. A comment the
-// caller marked as a system notice is machine-authored by construction and must never
-// stand in for a human answer: otherwise an automated "no PR yet, your move" nudge
-// expires the very question the work is waiting on, and the next nudge asks again.
+// Authenticated provenance: the comment demonstrably came from a machine. `createdByRunId`
+// covers anything posted from a heartbeat run; `authorType: "system"` covers the internal
+// producers (pipeline monitors, watchdogs, recovery) that insert notices directly.
 function isMachineAuthoredComment(comment: {
+  authorType?: IssueCommentAuthorType | null;
+  createdByRunId?: string | null;
+}) {
+  return Boolean(comment.createdByRunId) || comment.authorType === "system";
+}
+
+// Declared intent: the comment is a status notice, not an answer to anything. That is a
+// separate question from who wrote it, and deliberately so — `presentation` is caller-
+// supplied and cannot prove authorship. It does not need to. Local automation that
+// authenticates with a board/user token has no run context and is forced to
+// `authorType: "user"`, so at this decision point its comments are byte-identical to a
+// human's, and the notice framing is the only thing the caller told us. Reading that as
+// "not an answer" holds either way: an automated "no PR yet, your move" nudge must not
+// expire the very question the work is waiting on, and a person who deliberately posts a
+// system notice has not answered the question either. Answering stays available and
+// explicit — resolve the card.
+function isNonAnswerComment(comment: { presentation?: IssueCommentPresentation | null }) {
+  return comment.presentation?.kind === "system_notice";
+}
+
+// A pending decision card waits on a human answer, so only a comment that could be one may
+// consume it.
+function commentCanSupersedeDecision(comment: {
   authorType?: IssueCommentAuthorType | null;
   createdByRunId?: string | null;
   presentation?: IssueCommentPresentation | null;
 }) {
-  if (comment.createdByRunId) return true;
-  if (comment.authorType === "system") return true;
-  return comment.presentation?.kind === "system_notice";
+  return !isMachineAuthoredComment(comment) && !isNonAnswerComment(comment);
 }
 
 function normalizeCreateInteractionInput(
@@ -4136,8 +4153,9 @@ export function issueThreadInteractionService(
     ) => {
       if (!comment.authorUserId) return [];
       // Local-CLI adapters and board-token automation both post under user auth, so
-      // authorUserId can't tell a human from a machine. Only genuine human comments do.
-      if (isMachineAuthoredComment(comment)) return [];
+      // authorUserId can't tell a human from a machine, and a status notice is not an
+      // answer whoever wrote it. Only a comment that could be a human answer supersedes.
+      if (!commentCanSupersedeDecision(comment)) return [];
 
       const rows = await db
         .select()
@@ -4240,17 +4258,17 @@ export function issueThreadInteractionService(
               eq(issueComments.issueId, issue.id),
               isNotNull(issueComments.authorUserId),
               // Cheap SQL prefilter for the common machine case; the remaining
-              // machine-authored shapes live in jsonb and are filtered below.
+              // non-answer shapes live in jsonb and are filtered below.
               isNull(issueComments.createdByRunId),
             ),
           )
           .orderBy(asc(issueComments.createdAt)),
       ]);
 
-      // Only genuine human comments supersede a card that is waiting on a human.
-      const humanComments = comments.filter((comment) => !isMachineAuthoredComment(comment));
+      // Only a comment that could be a human answer supersedes a card waiting on one.
+      const answerComments = comments.filter(commentCanSupersedeDecision);
 
-      if (rows.length === 0 || humanComments.length === 0) return [];
+      if (rows.length === 0 || answerComments.length === 0) return [];
 
       const now = new Date();
       const expired: IssueThreadInteraction[] = [];
@@ -4268,7 +4286,7 @@ export function issueThreadInteractionService(
         ) as UserCommentSupersedableInteraction;
         if (!shouldSupersedeInteractionOnUserComment(interaction)) continue;
 
-        const supersedingComment = humanComments.find((comment) =>
+        const supersedingComment = answerComments.find((comment) =>
           isCommentAtOrAfterInteraction({
             commentCreatedAt: comment.createdAt,
             interactionCreatedAt: row.createdAt,
