@@ -149,6 +149,7 @@ import {
   type StartupStepMeasureOptions,
   type StartupTraceContext,
 } from "./startup-timing.js";
+import { stripRunScopedScratchEnvForFingerprint } from "./run-scoped-env.js";
 
 const defaultModuleDir = path.dirname(fileURLToPath(import.meta.url));
 const PAPERCLIP_MANAGED_CODEX_SKILLS_MANIFEST = ".paperclip-managed-skills.json";
@@ -1688,6 +1689,10 @@ async function buildRuntime(input: {
   const workspaceContext = parseObject(context.paperclipWorkspace);
   const secretsContext = parseObject(context.paperclipSecrets);
   const secretManifest = Array.isArray(secretsContext.manifest) ? secretsContext.manifest : [];
+  // The server-owned scratch directory for THIS run. Its paths are injected into
+  // the adapter env and must reach the child, but they change every heartbeat, so
+  // they are filtered out of the session fingerprint below.
+  const runScratchDir = asString(parseObject(context.paperclipScratch).dir, "");
   const workspaceCwd = asString(workspaceContext.cwd, "");
   const workspaceSource = asString(workspaceContext.source, "");
   const workspaceStrategy = asString(workspaceContext.strategy, "");
@@ -2098,9 +2103,14 @@ async function buildRuntime(input: {
     // PAPERCLIP_API_KEY) into the fingerprint so a change to any forwarded value
     // invalidates a warm handle / resumable session and forces a fresh launch
     // that sources the latest env. secretManifestHash alone misses plain-value
-    // edits and same-version secret rotations. Per-wake runtime vars never enter
-    // resolvedAdapterEnv, so they don't churn the fingerprint every heartbeat.
-    adapterEnvHash: shortHash(resolvedAdapterEnv),
+    // edits and same-version secret rotations. Per-wake PAPERCLIP_* runtime vars
+    // assigned to `env` are skipped by the loop that fills resolvedAdapterEnv, but
+    // the server-owned run scratch paths arrive through the adapter env config
+    // itself and would otherwise rewrite this hash on every heartbeat — so they
+    // are filtered here, by value, leaving user-owned env changes invalidating.
+    adapterEnvHash: shortHash(
+      stripRunScopedScratchEnvForFingerprint(resolvedAdapterEnv, runScratchDir),
+    ),
   };
   const fingerprint = buildSessionFingerprint(fingerprintIdentity);
   const taskKey = asString(input.ctx.runtime.taskKey, "") || wakeTaskId || workspaceId || "default";
