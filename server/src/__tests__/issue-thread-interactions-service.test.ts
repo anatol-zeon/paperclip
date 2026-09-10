@@ -3196,12 +3196,61 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
     expect(rows[0]?.status).toBe("pending");
   });
 
-  it("treats a system notice as a non-answer even when a human posted it, and still supersedes on their next plain comment", async () => {
-    // `presentation` is caller-supplied, so it cannot prove authorship — and it does not
-    // have to. A comment framed as a status notice is not an answer to a pending question
-    // whoever wrote it, so it must not consume the card. The person keeps every way of
-    // answering: resolving the card, or simply commenting normally.
-    const { companyId, issueId } = await seedConfirmationIssue("Human-authored system notice is not an answer");
+  it("does not let a genuine user suppress expiry with a system-notice marker", async () => {
+    // `presentation` is caller-supplied, so it is only honoured from a non-human sentinel
+    // author. A real signup that marks its comment as a system notice must not be able to
+    // hold its own pending card open indefinitely — that comment still supersedes.
+    const { companyId, issueId } = await seedConfirmationIssue("Genuine user cannot suppress expiry");
+
+    const created = await interactionsSvc.create({
+      id: issueId,
+      companyId,
+    }, {
+      kind: "request_confirmation",
+      payload: {
+        version: 1,
+        prompt: "Proceed with the current draft?",
+      },
+    }, {
+      userId: "local-board",
+    });
+
+    const markedCommentId = randomUUID();
+    const expired = await interactionsSvc.expireRequestConfirmationsSupersededByComment({
+      id: issueId,
+      companyId,
+    }, {
+      id: markedCommentId,
+      createdAt: new Date(new Date(created.createdAt).getTime() + 1_000),
+      authorUserId: "genuine-signup-user",
+      authorType: "user",
+      createdByRunId: null,
+      presentation: {
+        kind: "system_notice",
+        tone: "info",
+        detailsDefaultOpen: false,
+      },
+    }, {
+      userId: "genuine-signup-user",
+    });
+
+    expect(expired).toHaveLength(1);
+    expect(expired[0]).toMatchObject({
+      id: created.id,
+      status: "expired",
+      result: {
+        version: 1,
+        outcome: "superseded_by_comment",
+        commentId: markedCommentId,
+      },
+    });
+  });
+
+  it("does not supersede on a server-derived agent attribution, and still supersedes on the next plain board comment", async () => {
+    // `derivedAuthorAgentId` is written by the server from run logs, not by the caller. It
+    // exists because agents post under the `local-board` sentinel, which is exactly the
+    // case this guard has to catch.
+    const { companyId, issueId } = await seedConfirmationIssue("Derived agent attribution is machine-authored");
 
     const created = await interactionsSvc.create({
       id: issueId,
@@ -3226,11 +3275,7 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
       authorUserId: "local-board",
       authorType: "user",
       createdByRunId: null,
-      presentation: {
-        kind: "system_notice",
-        tone: "info",
-        detailsDefaultOpen: false,
-      },
+      derivedAuthorAgentId: randomUUID(),
     }, {
       userId: "local-board",
     })).resolves.toHaveLength(0);
